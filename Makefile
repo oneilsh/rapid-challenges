@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-autoimmune
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -23,6 +23,7 @@ help:
 	@echo "                               mismatched google-api-core errors)"
 	@echo "  make wearables-rare        - wearables x rare disease census -> RUNS_DIR/wearables-rare/"
 	@echo "      ARGS='--flags gard_rare --min-days 90'"
+	@echo "  make wearables-rare-exact  - all Mondo rare diseases, exact SNOMED mapping"
 	@echo "  make wearables-rare-autoimmune - same, rare autoimmune diseases only, exact SNOMED"
 	@echo "                               mapping (add ARGS=--no-descendants for codes only)"
 	@echo "Locally:"
@@ -46,6 +47,11 @@ wearables-rare: $(WORKSPACE_ENV)
 	mkdir -p "$(WEAR_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_rare.py \
 	    --out-dir "$(WEAR_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
 	    $(ARGS) 2>&1 | tee -a "$(WEAR_OUT)/wearables_rare_log.md"
+
+# All Mondo rare diseases (the default `rare` union), mapped only via each disease's own
+# standard SNOMED concept.
+wearables-rare-exact:
+	$(MAKE) wearables-rare ARGS="--exact $(ARGS)"
 
 # Rare autoimmune diseases (Mondo subtree MONDO:0007179; Orphanet/GARD/NORD/Mondo rare, not
 # inferred), mapped only via each disease's own standard SNOMED concept.

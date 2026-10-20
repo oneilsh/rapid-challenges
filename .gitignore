@@ -4,6 +4,8 @@ data/
 *.tsv
 *.csv
 *.parquet
+# ...except masked, egress-safe audit outputs filed under results/
+!results/**/*.tsv
 .workspace_env
 
 .venv/
