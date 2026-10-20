@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -28,6 +28,8 @@ help:
 	@echo "                               mapping (add ARGS=--no-descendants for codes only)"
 	@echo "Locally:"
 	@echo "  make test                  - unit tests (uv run pytest)"
+	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
+	@echo "                               names (tx.fhir.org) -> results/mondo-snomed-review/"
 
 setup:
 	python3 $(REPO_ROOT)/rapidaudit/setup_workspace.py --out $(WORKSPACE_ENV) $(if $(CDR),--cdr=$(CDR))
@@ -41,6 +43,12 @@ $(WORKSPACE_ENV):
 
 test:
 	uv run pytest -q
+
+MONDO_VERSION ?= 2026-06-02
+mondo-snomed-review:
+	PYTHONPATH=$(REPO_ROOT) uv run python $(REPO_ROOT)/scripts/mondo_snomed_review.py \
+	    --mondo-version $(MONDO_VERSION) --cache-dir $(MONDO_CACHE) \
+	    --out $(REPO_ROOT)/results/mondo-snomed-review/$(MONDO_VERSION)-rare-snomed-review.tsv
 
 WEAR_OUT ?= $(RUNS_DIR)/wearables-rare
 wearables-rare: $(WORKSPACE_ENV)
