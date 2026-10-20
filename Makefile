@@ -1,4 +1,4 @@
-.PHONY: help setup test wearables-rare
+.PHONY: help setup deps test wearables-rare
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -19,6 +19,8 @@ help:
 	@echo "On an AoU Workbench VM:"
 	@echo "  make setup                 - discover project/CDR/buckets via 'wb' -> .workspace_env"
 	@echo "                               (pass CDR=<proj>.<ds> if not auto-discovered)"
+	@echo "  make deps                  - upgrade the BigQuery client stack together (fixes"
+	@echo "                               mismatched google-api-core errors)"
 	@echo "  make wearables-rare        - wearables x rare disease census -> RUNS_DIR/wearables-rare/"
 	@echo "      ARGS='--flags gard_rare --min-days 90'"
 	@echo "Locally:"
@@ -26,6 +28,10 @@ help:
 
 setup:
 	python3 $(REPO_ROOT)/rapidaudit/setup_workspace.py --out $(WORKSPACE_ENV) $(if $(CDR),--cdr=$(CDR))
+
+# The VM image's google-* packages can be mutually out of date; upgrade them as a set.
+deps:
+	python3 -m pip install --user --upgrade google-cloud-bigquery google-api-core google-cloud-core
 
 $(WORKSPACE_ENV):
 	$(MAKE) setup

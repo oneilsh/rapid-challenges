@@ -25,6 +25,7 @@ From a Workbench VM (no Dataproc cluster needed), in a clone of this repo:
 
 ```bash
 make setup                     # once per VM; add CDR=<project>.<dataset> if needed
+make deps                      # once per VM; upgrades the BigQuery client stack
 make wearables-rare            # default: --flags rare --min-days 30
 make wearables-rare ARGS="--flags orphanet_rare --min-days 90"
 ```
