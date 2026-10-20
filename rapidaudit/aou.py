@@ -1,7 +1,8 @@
-"""AoU Workbench I/O: the workspace env, CDR table reads, and the cached Mondo download.
+"""AoU Workbench I/O: the workspace env, BigQuery queries against the CDR, and the cached
+Mondo download.
 
-`read_bq` and `download_cached` are copied from CHARMPheno
-analysis/cloud/anchor_selection_cloud.py (`_read_bq`, `_download_cached`, commit 220ed138).
+`download_cached` is copied from CHARMPheno analysis/cloud/anchor_selection_cloud.py
+(`_download_cached`, commit 220ed138).
 """
 from __future__ import annotations
 
@@ -36,10 +37,17 @@ def download_cached(version: str, filename: str, cache_dir: Path) -> Path:
     return dest
 
 
-def read_bq(spark, cdr_dataset: str, billing_project: str, table: str):
-    return (
-        spark.read.format("bigquery")
-        .option("table", f"{cdr_dataset}.{table}")
-        .option("parentProject", billing_project)
-        .load()
-    )
+def bq_client(billing_project: str):
+    from google.cloud import bigquery
+    return bigquery.Client(project=billing_project)
+
+
+def query(client, sql: str, params: dict | None = None):
+    """Run `sql` and return a pandas DataFrame. `params` maps name -> (type, value);
+    a list/tuple value becomes an ARRAY<type> parameter, anything else a scalar."""
+    from google.cloud import bigquery
+    qp = [bigquery.ArrayQueryParameter(k, t, list(v)) if isinstance(v, (list, tuple))
+          else bigquery.ScalarQueryParameter(k, t, v)
+          for k, (t, v) in (params or {}).items()]
+    job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=qp))
+    return job.result().to_dataframe()

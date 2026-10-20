@@ -32,11 +32,12 @@ EGRESS: rows with n_wear < 20 are dropped; any remaining cell in 1..19 prints as
 cells in 1..19 as "<20" and no % column.
 Output goes to --out-dir (a workspace run dir), never the tree.
 
-Spark-native joins / groupBys only; the small (mondo_id, concept_id) map is a
-broadcast-joined DataFrame, not a closure.
+The heavy joins run in BigQuery (google-cloud-bigquery from a Workbench VM; no
+Spark). The small (mondo_id, concept_id) rare map goes in as array query parameters.
 
-Copied from CHARMPheno analysis/cloud/diag_wearables_rare.py (branch
-claude/dismech-ribbon, a6a3a776, plus the _all.tsv output).
+Ported from CHARMPheno analysis/cloud/diag_wearables_rare.py (branch
+claude/dismech-ribbon, a6a3a776), a Spark/Dataproc driver: same method and outputs, plus
+the _all.tsv output.
 """
 from __future__ import annotations
 
@@ -48,6 +49,9 @@ from pathlib import Path
 import pandas as pd
 
 from rapidaudit.egress import EGRESS_FLOOR, cell, mask_counts
+from rapidaudit.aou import bq_client, download_cached, query, workspace_env
+from rapidaudit.mondo_to_omop_mapping import (_disease_child_adjacency,
+                                              build_mondo_to_omop, seed_source_xrefs)
 
 _SOURCE_FLAGS = ("rare", "orphanet_rare", "gard_rare", "nord_rare", "inferred_rare",
                  "mondo_rare")
@@ -133,31 +137,85 @@ def table_rows(per: pd.DataFrame, names: dict, groups: set, flags_by_node: dict,
     return d.sort_values(["n_wear", "n_dx"], ascending=False).reset_index(drop=True)
 
 
-def _wear_days(spark, cdr, billing, read_bq):
-    """(person_id, fb_days, fb_start, fb_end) over the daily-summary tables found."""
-    from pyspark.sql import functions as F
+def wear_union_sql(cdr: str, columns_by_table: dict) -> tuple[str, list]:
+    """UNION ALL of (person_id, d) over the Fitbit daily-summary tables present in the
+    CDR, picking each table's first available date column. Returns (sql, tables used)."""
     parts, found = [], []
     for t, cols in _WEAR_TABLES:
-        try:
-            df = read_bq(spark, cdr, billing, t)
-            dc = next((c for c in cols if c in df.columns), None)
-            if dc is None:
-                print(f"[wear] {t}: no date column among {cols} (has {df.columns[:8]}…); "
-                      f"skipped", flush=True)
-                continue
-            parts.append(df.select("person_id", F.to_date(F.col(dc)).alias("d")))
-            found.append(t)
-        except Exception as e:  # table absent in this CDR version
-            print(f"[wear] {t}: not readable ({type(e).__name__}); skipped", flush=True)
+        have = columns_by_table.get(t)
+        if not have:
+            print(f"[wear] {t}: not in this CDR; skipped", flush=True)
+            continue
+        dc = next((c for c in cols if c in have), None)
+        if dc is None:
+            print(f"[wear] {t}: no date column among {cols}; skipped", flush=True)
+            continue
+        parts.append(f"SELECT person_id, CAST({dc} AS DATE) AS d FROM `{cdr}.{t}`")
+        found.append(t)
     if not parts:
         raise SystemExit("[wear] no Fitbit daily-summary table found in this CDR")
-    u = parts[0]
-    for p in parts[1:]:
-        u = u.unionByName(p)
-    wear = (u.where(F.col("d").isNotNull()).groupBy("person_id")
-            .agg(F.countDistinct("d").alias("fb_days"), F.min("d").alias("fb_start"),
-                 F.max("d").alias("fb_end")))
-    return wear, found
+    return "\n    UNION ALL\n    ".join(parts), found
+
+
+def census_ctes(cdr: str, wear_union: str) -> str:
+    """Shared WITH clause. Params: @mondo ARRAY<STRING> and @cid ARRAY<INT64> (parallel:
+    the rare map), @min_days INT64. `j` = one row per (person, rare node) with the first
+    in-subtree diagnosis and that person's Fitbit wear."""
+    return f"""
+WITH rmap AS (
+  SELECT m AS mondo_id, @cid[OFFSET(i)] AS standard_concept_id
+  FROM UNNEST(@mondo) AS m WITH OFFSET i),
+node_concepts AS (
+  SELECT DISTINCT r.mondo_id, ca.descendant_concept_id AS cid
+  FROM rmap r
+  JOIN `{cdr}.concept_ancestor` ca ON ca.ancestor_concept_id = r.standard_concept_id),
+dx AS (
+  SELECT co.person_id, nc.mondo_id, MIN(CAST(co.condition_start_date AS DATE)) AS first_dx
+  FROM `{cdr}.condition_occurrence` co
+  JOIN node_concepts nc ON co.condition_concept_id = nc.cid
+  GROUP BY 1, 2),
+wear_days AS (
+    {wear_union}),
+wear AS (
+  SELECT person_id, COUNT(DISTINCT d) AS fb_days, MIN(d) AS fb_start, MAX(d) AS fb_end
+  FROM wear_days WHERE d IS NOT NULL GROUP BY person_id),
+j AS (
+  SELECT dx.person_id, dx.mondo_id, dx.first_dx, w.fb_start, w.fb_end,
+         COALESCE(w.fb_days >= @min_days, FALSE) AS ok
+  FROM dx LEFT JOIN wear w USING (person_id))
+"""
+
+
+PER_NODE_SELECT = """
+SELECT mondo_id,
+  COUNT(DISTINCT person_id) AS n_dx,
+  COUNT(DISTINCT IF(ok, person_id, NULL)) AS n_wear,
+  COUNT(DISTINCT IF(ok AND fb_start <= first_dx, person_id, NULL)) AS n_wear_before,
+  COUNT(DISTINCT IF(ok AND fb_start <= first_dx AND fb_end >= first_dx, person_id, NULL))
+    AS n_wear_span
+FROM j GROUP BY mondo_id
+"""
+
+
+def overall_select(cdr: str) -> str:
+    """One row of population counts. Extra params: @nongroup and one ARRAY<STRING> per
+    source flag in _SOURCE_FLAGS[1:4] (empty arrays are fine)."""
+    per_src = ",\n".join(
+        f"  COUNT(DISTINCT IF(mondo_id IN UNNEST(@{f}), person_id, NULL)) AS {f}_dx,\n"
+        f"  COUNT(DISTINCT IF(ok AND mondo_id IN UNNEST(@{f}), person_id, NULL)) "
+        f"AS {f}_wear" for f in _SOURCE_FLAGS[1:4])
+    return f"""
+SELECT
+  (SELECT COUNT(DISTINCT person_id) FROM `{cdr}.condition_occurrence`) AS n_cond_pop,
+  (SELECT COUNT(*) FROM wear) AS n_wear_any,
+  (SELECT COUNTIF(fb_days >= @min_days) FROM wear) AS n_wear_ok,
+  (SELECT COUNT(DISTINCT cid) FROM node_concepts) AS n_desc,
+  COUNT(DISTINCT person_id) AS rare_dx,
+  COUNT(DISTINCT IF(ok, person_id, NULL)) AS rare_wear,
+  COUNT(DISTINCT IF(ok AND mondo_id IN UNNEST(@nongroup), person_id, NULL)) AS nongroup_wear,
+{per_src}
+FROM j
+"""
 
 
 def main(argv=None) -> int:
@@ -181,37 +239,40 @@ def main(argv=None) -> int:
         raise SystemExit(f"unknown --flags {bad}; known: {_SOURCE_FLAGS}")
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    client = bq_client(billing)
 
-    from pyspark.sql import SparkSession, functions as F
-    from pyspark.sql.functions import broadcast
-
-    from rapidaudit.aou import download_cached as _download_cached
-    from rapidaudit.aou import read_bq as _read_bq
-    from rapidaudit.aou import workspace_env
-    from rapidaudit.mondo_to_omop_mapping import (_disease_child_adjacency,
-                                                  build_mondo_to_omop, seed_source_xrefs)
-    spark = SparkSession.builder.appName("diag-wearables-rare").getOrCreate()
-
-    # 1) Mondo rare nodes -> OMOP standard conditions (the fit's own mapping recipe).
+    # 1) Mondo rare nodes -> OMOP standard conditions (mondo2omop recipe). Only the
+    #    concepts the Mondo xrefs can hit, plus their 'Maps to' targets, are fetched.
     cache = Path(args.mondo_cache_dir)
-    edges = pd.read_csv(_download_cached(args.mondo_version, "mondo_edges.tsv", cache),
+    edges = pd.read_csv(download_cached(args.mondo_version, "mondo_edges.tsv", cache),
                         sep="\t", low_memory=False)
-    nodes = pd.read_csv(_download_cached(args.mondo_version, "mondo_nodes.tsv", cache),
+    nodes = pd.read_csv(download_cached(args.mondo_version, "mondo_nodes.tsv", cache),
                         sep="\t", low_memory=False)
-    concept_pd = (_read_bq(spark, cdr, billing, "concept")
-                  .select("concept_id", "concept_name", "vocabulary_id", "domain_id",
-                          "concept_code", "standard_concept")
-                  .where(F.col("vocabulary_id").isin("SNOMED", "ICD10CM", "MeSH"))
-                  .toPandas())
     same_as = seed_source_xrefs(mondo_edges_df=edges, mondo_nodes_df=nodes,
                                 restrict_mondo_ids=set(nodes["id"]))
-    src = same_as.merge(concept_pd, on=["concept_code", "vocabulary_id"], how="inner")
-    src_sdf = spark.createDataFrame(pd.DataFrame(
-        {"concept_id_1": sorted({int(x) for x in src["concept_id"]})}))
-    cr_pd = (_read_bq(spark, cdr, billing, "concept_relationship")
-             .select("concept_id_1", "concept_id_2", "relationship_id")
-             .where(F.col("relationship_id") == "Maps to")
-             .join(broadcast(src_sdf), "concept_id_1", "inner").toPandas())
+    keys = sorted(set(same_as["vocabulary_id"] + "|" + same_as["concept_code"].astype(str)))
+    src_cte = f"""
+WITH src AS (
+  SELECT concept_id, concept_name, vocabulary_id, domain_id, concept_code, standard_concept
+  FROM `{cdr}.concept`
+  WHERE vocabulary_id IN ('SNOMED', 'ICD10CM', 'MeSH')
+    AND CONCAT(vocabulary_id, '|', concept_code) IN UNNEST(@keys)),
+mt AS (
+  SELECT concept_id_1, concept_id_2, relationship_id
+  FROM `{cdr}.concept_relationship`
+  WHERE relationship_id = 'Maps to' AND concept_id_1 IN (SELECT concept_id FROM src))
+"""
+    kp = {"keys": ("STRING", keys)}
+    cr_pd = query(client, src_cte + "SELECT * FROM mt", kp)
+    concept_pd = query(client, src_cte + f"""
+SELECT * FROM src
+UNION DISTINCT
+SELECT concept_id, concept_name, vocabulary_id, domain_id, concept_code, standard_concept
+FROM `{cdr}.concept`
+WHERE vocabulary_id IN ('SNOMED', 'ICD10CM', 'MeSH')
+  AND concept_id IN (SELECT concept_id_2 FROM mt)""", kp)
+    print(f"[wear] {len(keys):,} Mondo xrefs -> {len(concept_pd):,} concepts, "
+          f"{len(cr_pd):,} 'Maps to' rows", flush=True)
     mapping = build_mondo_to_omop(mondo_edges_df=edges, mondo_nodes_df=nodes,
                                   concept_df=concept_pd, concept_relationship_df=cr_pd)
     rmap = rare_concept_map(mapping, flags)
@@ -223,65 +284,48 @@ def main(argv=None) -> int:
           f"{rmap['standard_concept_id'].nunique():,} standard concepts "
           f"({len(groups):,} are groupings)", flush=True)
 
-    # 2) widen to OMOP descendants; first in-subtree diagnosis per (person, node).
-    rm_sdf = spark.createDataFrame(rmap[["mondo_id", "standard_concept_id"]])
-    ca = _read_bq(spark, cdr, billing, "concept_ancestor").select(
-        "ancestor_concept_id", "descendant_concept_id")
-    node_concepts = (ca.join(broadcast(rm_sdf), ca["ancestor_concept_id"]
-                             == rm_sdf["standard_concept_id"], "inner")
-                     .select("mondo_id", F.col("descendant_concept_id").alias("cid"))
-                     .distinct().cache())
-    n_desc = node_concepts.select("cid").distinct().count()
-    co = (_read_bq(spark, cdr, billing, "condition_occurrence")
-          .select("person_id", F.col("condition_concept_id").alias("cid"),
-                  F.to_date("condition_start_date").alias("d")))
-    n_cond_pop = co.select("person_id").distinct().count()
-    dx = (co.join(broadcast(node_concepts), "cid", "inner")
-          .groupBy("person_id", "mondo_id").agg(F.min("d").alias("first_dx")).cache())
+    # 2) Fitbit tables present in this CDR.
+    cols = query(client, f"""
+SELECT table_name, column_name FROM `{cdr}.INFORMATION_SCHEMA.COLUMNS`
+WHERE table_name IN UNNEST(@tables)""",
+                 {"tables": ("STRING", [t for t, _ in _WEAR_TABLES])})
+    wear_union, found = wear_union_sql(
+        cdr, cols.groupby("table_name")["column_name"].apply(set).to_dict())
 
-    # 3) Fitbit wear per person.
-    wear, found = _wear_days(spark, cdr, billing, _read_bq)
-    wear = wear.cache()
-    ok = F.col("fb_days") >= int(args.min_days)
-    j = dx.join(wear, "person_id", "left")
-    per = (j.groupBy("mondo_id").agg(
-        F.countDistinct("person_id").alias("n_dx"),
-        F.countDistinct(F.when(ok, F.col("person_id"))).alias("n_wear"),
-        F.countDistinct(F.when(ok & (F.col("fb_start") <= F.col("first_dx")),
-                               F.col("person_id"))).alias("n_wear_before"),
-        F.countDistinct(F.when(ok & (F.col("fb_start") <= F.col("first_dx"))
-                               & (F.col("fb_end") >= F.col("first_dx")),
-                               F.col("person_id"))).alias("n_wear_span"))
-        .toPandas())
+    # 3) per-node and overall counts, computed in BigQuery.
+    ctes = census_ctes(cdr, wear_union)
+    params = {"mondo": ("STRING", rmap["mondo_id"].tolist()),
+              "cid": ("INT64", [int(c) for c in rmap["standard_concept_id"]]),
+              "min_days": ("INT64", int(args.min_days))}
+    print("[wear] per-node counts query…", flush=True)
+    per = query(client, ctes + PER_NODE_SELECT, params)
+    src_ids = {f: sorted(rmap.loc[rmap[f] == 1, "mondo_id"].unique()) if f in rmap else []
+               for f in _SOURCE_FLAGS[1:4]}
+    print("[wear] overall counts query…", flush=True)
+    o = query(client, ctes + overall_select(cdr), {
+        **params, "nongroup": ("STRING", sorted(set(rmap["mondo_id"]) - groups)),
+        **{f: ("STRING", ids) for f, ids in src_ids.items()}}).iloc[0]
+    o = {k: int(v) for k, v in o.items()}
 
-    # 4) overall counts (any rare, and per source subset).
+    n_cond_pop = o["n_cond_pop"]
     counts = {
         "persons with any condition": n_cond_pop,
-        "persons with any Fitbit day": wear.count(),
-        f"persons with >= {args.min_days} Fitbit days": wear.where(ok).count()}
-    rare_p = dx.select("person_id").distinct()
-    wear_ok = wear.where(ok).select("person_id")
-    counts["persons with any rare dx"] = rare_p.count()
-    counts[f"... and >= {args.min_days} Fitbit days"] = rare_p.join(wear_ok, "person_id").count()
-    nongroup = dx.join(broadcast(spark.createDataFrame(
-        pd.DataFrame({"mondo_id": sorted(set(rmap["mondo_id"]) - groups)}))), "mondo_id")
-    counts["... rare dx on a non-grouping node, with wear"] = (
-        nongroup.select("person_id").distinct().join(wear_ok, "person_id").count())
-    for f in _SOURCE_FLAGS[1:4]:
-        ids = sorted(rmap.loc[rmap[f] == 1, "mondo_id"].unique()) if f in rmap else []
-        if not ids:
-            continue
-        sub = dx.join(broadcast(spark.createDataFrame(pd.DataFrame({"mondo_id": ids}))),
-                      "mondo_id").select("person_id").distinct()
-        counts[f"  {f} dx"] = sub.count()
-        counts[f"  {f} dx with wear"] = sub.join(wear_ok, "person_id").count()
+        "persons with any Fitbit day": o["n_wear_any"],
+        f"persons with >= {args.min_days} Fitbit days": o["n_wear_ok"],
+        "persons with any rare dx": o["rare_dx"],
+        f"... and >= {args.min_days} Fitbit days": o["rare_wear"],
+        "... rare dx on a non-grouping node, with wear": o["nongroup_wear"]}
+    for f, ids in src_ids.items():
+        if ids:
+            counts[f"  {f} dx"] = o[f"{f}_dx"]
+            counts[f"  {f} dx with wear"] = o[f"{f}_wear"]
 
     rows = table_rows(per, names, groups, flags_by_node, n_cond_pop=n_cond_pop,
                       suspect_share=args.suspect_share)
     overall = {"wear_tables": found, "flags": flags,
                "n_rare_nodes": int(rmap["mondo_id"].nunique()),
                "n_rare_concepts": int(rmap["standard_concept_id"].nunique()),
-               "n_rare_concepts_desc": int(n_desc), "counts": counts}
+               "n_rare_concepts_desc": o["n_desc"], "counts": counts}
     text = format_report(rows, overall, min_days=args.min_days, top=args.top)
     tag = "_".join(flags) + f"_d{args.min_days}"
     (out / f"wearables_rare_{tag}.md").write_text(text)

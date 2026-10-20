@@ -1,16 +1,17 @@
 # rapid-challenges
 
 Participant-count audits for the RAPID TA1 challenges, run on the All of Us Workbench
-(Dataproc + the CDR in BigQuery). Each audit answers a question like "how many
-participants have X and Y, broken down by Z", and writes egress-safe tables.
+(plain Python on a Workbench VM, querying the CDR in BigQuery). Each audit answers a
+question like "how many participants have X and Y, broken down by Z", and writes
+egress-safe tables.
 
 ## Layout
 
 | path | what |
 |---|---|
-| `audits/` | one Spark driver per audit (`wearables_rare.py`: Fitbit x Mondo rare disease) |
+| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease) |
 | `rapidaudit/egress.py` | the small-count rule: 1–19 → `<20`, 0 stays 0 |
-| `rapidaudit/aou.py` | workspace env, `read_bq` (CDR table → Spark DataFrame), cached Mondo download |
+| `rapidaudit/aou.py` | workspace env, `query` (parameterized SQL → pandas), cached Mondo download |
 | `rapidaudit/mondo_to_omop_mapping.py` | Mondo → OMOP standard Condition (port of Monarch's mondo2omop) |
 | `rapidaudit/setup_workspace.py` | writes `.workspace_env` from the `wb` CLI |
 | `docs/handoffs/` | session handoffs and per-audit notes |
@@ -20,16 +21,18 @@ source commit. This repo doesn't depend on CHARMPheno at runtime.
 
 ## Running on the Workbench
 
-From the Dataproc master, in a clone of this repo:
+From a Workbench VM (no Dataproc cluster needed), in a clone of this repo:
 
 ```bash
-make setup                     # once per cluster; add CDR=<project>.<dataset> if needed
+make setup                     # once per VM; add CDR=<project>.<dataset> if needed
 make wearables-rare            # default: --flags rare --min-days 30
 make wearables-rare ARGS="--flags orphanet_rare --min-days 90"
 ```
 
-Outputs go to `$(RUNS_DIR)/<audit>/`, outside the repo. Override `RUNS_DIR=...` if the
-default workspace path doesn't exist on your cluster.
+Outputs go to `$(RUNS_DIR)/<audit>/`, outside the repo. The default `RUNS_DIR` is the
+bucket-backed workspace mount
+`/home/jupyter/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy`,
+so results survive VM deletion. Override with `RUNS_DIR=...`.
 
 ## Egress
 
@@ -44,7 +47,7 @@ through `rapidaudit.egress.mask_counts` before it is written. Also check before 
 ## Local tests
 
 ```bash
-make test        # uv run pytest; pure pandas logic only, no Spark needed
+make test        # uv run pytest; pure pandas/SQL-building logic only, no BigQuery needed
 ```
 
 ## Adding an audit

@@ -12,13 +12,13 @@ for layout and how to run.
 - **No data in the repo.** Audits write to `--out-dir` under `RUNS_DIR`, never to the
   tree. `.gitignore` blocks `*.tsv`, `*.csv`, `data/` and `runs/`. Keep it that way.
 - **Can't run locally.** The CDR is only reachable from the Workbench. Locally, test the
-  pure pandas functions (`make test`); Spark/BigQuery code paths are cluster-only, so the
+  pure functions (`make test`); BigQuery code paths only run on the Workbench, so the
   user runs them and pastes back the masked output.
-- **Driver-only Python.** Audits use Spark-native joins/groupBys plus pandas on the
-  driver, so `spark-submit` in client mode with `PYTHONPATH` works and no `--py-files`
-  are needed. If an audit adds a Python UDF, it needs a zip of `rapidaudit/` on
-  `--py-files`.
+- **BigQuery, not Spark.** The Workbench VM has no Dataproc cluster. Audits push the
+  heavy joins and `COUNT(DISTINCT ...)`s into SQL via `rapidaudit.aou.query`, pass small
+  lookup tables as array query parameters (the CDR dataset is read-only), and only pull
+  aggregated rows into pandas. CHARMPheno's drivers are Spark: port them, don't copy.
 - **Code copied from CHARMPheno** (`~/Documents/projects/tislab/CHARM/CHARMPheno`,
   `analysis/cloud/`) keeps a provenance line naming the source file and commit. Look
-  there first for reusable cluster helpers (OMOP reads, Mondo/HPO mapping, concept
+  there first for reusable helpers (OMOP reads, Mondo/HPO mapping, concept
   hierarchies) and copy them in rather than importing across repos.
