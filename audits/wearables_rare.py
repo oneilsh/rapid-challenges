@@ -50,7 +50,8 @@ import pandas as pd
 
 from rapidaudit.egress import EGRESS_FLOOR, cell, mask_counts
 from rapidaudit.aou import bq_client, download_cached, query, workspace_env
-from rapidaudit.mondo_to_omop_mapping import (_disease_child_adjacency,
+from rapidaudit.mondo_to_omop_mapping import (_descendants, _disease_child_adjacency,
+                                              _disease_nodes, _subsets_table,
                                               build_mondo_to_omop, seed_source_xrefs)
 
 _SOURCE_FLAGS = ("rare", "orphanet_rare", "gard_rare", "nord_rare", "inferred_rare",
@@ -59,6 +60,57 @@ _SOURCE_FLAGS = ("rare", "orphanet_rare", "gard_rare", "nord_rare", "inferred_ra
 _WEAR_TABLES = (("activity_summary", ("date",)),
                 ("heart_rate_summary", ("date",)),
                 ("sleep_daily_summary", ("sleep_date", "date")))
+
+
+def subtree(child_adj, roots) -> set:
+    """The Mondo `roots` and all their disease descendants."""
+    out = set(roots)
+    for r in roots:
+        out |= _descendants(child_adj, r)
+    return out
+
+
+def candidate_nodes(subsets: pd.DataFrame, flags, under=None) -> pd.DataFrame:
+    """Rows of the Mondo rare-subset table (`_subsets_table`) carrying ANY of `flags`,
+    restricted to the `under` id set when given."""
+    have = [f for f in flags if f in subsets.columns]
+    c = subsets[subsets[have].sum(axis=1) > 0]
+    if under is not None:
+        c = c[c["id"].isin(under)]
+    return c.rename(columns={"id": "mondo_id"}).reset_index(drop=True)
+
+
+def exact_snomed_mapping(same_as: pd.DataFrame, concept: pd.DataFrame) -> pd.DataFrame:
+    """The strict mapping: a Mondo node's own SNOMED `same_as` xref, used only when that
+    code is itself a standard Condition concept (no 'Maps to' hop, so no ICD/MeSH code
+    split into several targets, one of them broad). One row per SNOMED xref, with
+    `status` 'used' or 'snomed_not_standard_condition'."""
+    sn = same_as[same_as["vocabulary_id"] == "SNOMED"]
+    m = sn.merge(concept[concept["vocabulary_id"] == "SNOMED"],
+                 on=["concept_code", "vocabulary_id"], how="left")
+    ok = (m["standard_concept"] == "S") & (m["domain_id"] == "Condition")
+    return pd.DataFrame({
+        "mondo_id": m["mondo_id"], "xref": "SNOMED:" + m["concept_code"].astype(str),
+        "source_concept_name": m["concept_name"],
+        "standard_concept_id": m["concept_id"].where(ok),
+        "standard_concept_name": m["concept_name"].where(ok),
+        "status": ok.map({True: "used", False: "snomed_not_standard_condition"})})
+
+
+def mapping_review(cands: pd.DataFrame, mapping: pd.DataFrame, names: dict, *,
+                   none_status: str) -> pd.DataFrame:
+    """One row per (candidate Mondo node, xref -> standard concept) for eyeballing the
+    mapping; candidates with no mapping row get `none_status`. No person counts."""
+    flags = [f for f in _SOURCE_FLAGS[1:] if f in cands.columns]
+    r = cands[["mondo_id", *flags]].merge(mapping, on="mondo_id", how="left")
+    r["status"] = r["status"].fillna(none_status)
+    r.insert(1, "name", r["mondo_id"].map(lambda m: names.get(m, m)))
+    r.insert(2, "sources", r[flags].apply(
+        lambda row: ",".join(f.replace("_rare", "") for f in flags if row[f]), axis=1))
+    cols = ["mondo_id", "name", "sources", "xref", "source_concept_name",
+            "standard_concept_id", "standard_concept_name", "status"]
+    r["standard_concept_id"] = r["standard_concept_id"].astype("Int64")
+    return r[cols].sort_values(["status", "name"]).reset_index(drop=True)
 
 
 def rare_concept_map(mapping: pd.DataFrame, flags) -> pd.DataFrame:
@@ -104,8 +156,14 @@ def format_report(rows: pd.DataFrame, overall: dict, *, min_days, top,
          f"usable wear = >= {min_days} distinct days · rare = Mondo subsets "
          f"{', '.join(overall['flags'])} · {overall['n_rare_nodes']:,} rare Mondo nodes "
          f"mapped to {overall['n_rare_concepts']:,} standard concepts "
-         f"({overall['n_rare_concepts_desc']:,} with descendants)", "",
-         "| population | persons |", "|---|--:|"]
+         f"({overall['n_rare_concepts_desc']:,} with descendants)", ""]
+    scope = [f"under {', '.join(overall['under'])}" if overall.get("under") else "",
+             "exact SNOMED-only mapping" if overall.get("exact") else "",
+             "mapped concepts only (no descendants)"
+             if overall.get("descendants") is False else ""]
+    if any(scope):
+        L += ["Scope: " + " · ".join(x for x in scope if x), ""]
+    L += ["| population | persons |", "|---|--:|"]
     for k, v in overall["counts"].items():
         L.append(f"| {k} | {cell(v, floor)} |")
     L += ["", f"## Rare diseases with the most wearables data (top {top}; "
@@ -157,18 +215,22 @@ def wear_union_sql(cdr: str, columns_by_table: dict) -> tuple[str, list]:
     return "\n    UNION ALL\n    ".join(parts), found
 
 
-def census_ctes(cdr: str, wear_union: str) -> str:
+def census_ctes(cdr: str, wear_union: str, descendants: bool = True) -> str:
     """Shared WITH clause. Params: @mondo ARRAY<STRING> and @cid ARRAY<INT64> (parallel:
     the rare map), @min_days INT64. `j` = one row per (person, rare node) with the first
-    in-subtree diagnosis and that person's Fitbit wear."""
+    diagnosis (in the concept's OMOP subtree, or the concept alone if not
+    `descendants`) and that person's Fitbit wear."""
+    node_concepts = (f"""
+  SELECT DISTINCT r.mondo_id, ca.descendant_concept_id AS cid
+  FROM rmap r
+  JOIN `{cdr}.concept_ancestor` ca ON ca.ancestor_concept_id = r.standard_concept_id"""
+                     if descendants else """
+  SELECT DISTINCT mondo_id, standard_concept_id AS cid FROM rmap""")
     return f"""
 WITH rmap AS (
   SELECT m AS mondo_id, @cid[OFFSET(i)] AS standard_concept_id
   FROM UNNEST(@mondo) AS m WITH OFFSET i),
-node_concepts AS (
-  SELECT DISTINCT r.mondo_id, ca.descendant_concept_id AS cid
-  FROM rmap r
-  JOIN `{cdr}.concept_ancestor` ca ON ca.ancestor_concept_id = r.standard_concept_id),
+node_concepts AS ({node_concepts}),
 dx AS (
   SELECT co.person_id, nc.mondo_id, MIN(CAST(co.condition_start_date AS DATE)) AS first_dx
   FROM `{cdr}.condition_occurrence` co
@@ -231,6 +293,16 @@ def main(argv=None) -> int:
                         "persons with any condition (over-broad mapping)")
     p.add_argument("--mondo-version", default="2026-06-02")
     p.add_argument("--mondo-cache-dir", default="data/mondo")
+    p.add_argument("--under", default="",
+                   help="comma list of Mondo ids: only rare nodes in these subtrees "
+                        "(e.g. MONDO:0007179 autoimmune disease)")
+    p.add_argument("--exact", action="store_true",
+                   help="map only via a node's own SNOMED xref when it is a standard "
+                        "Condition concept (no ICD10CM/MeSH 'Maps to' hop)")
+    p.add_argument("--no-descendants", action="store_true",
+                   help="count the mapped standard concept only, not its OMOP subtree")
+    p.add_argument("--tag", default="",
+                   help="output file tag (default: built from the options)")
     args = p.parse_args(argv)
     cdr, billing = workspace_env()
     flags = [f.strip() for f in args.flags.split(",") if f.strip()]
@@ -273,13 +345,36 @@ WHERE vocabulary_id IN ('SNOMED', 'ICD10CM', 'MeSH')
   AND concept_id IN (SELECT concept_id_2 FROM mt)""", kp)
     print(f"[wear] {len(keys):,} Mondo xrefs -> {len(concept_pd):,} concepts, "
           f"{len(cr_pd):,} 'Maps to' rows", flush=True)
-    mapping = build_mondo_to_omop(mondo_edges_df=edges, mondo_nodes_df=nodes,
-                                  concept_df=concept_pd, concept_relationship_df=cr_pd)
+    adj = _disease_child_adjacency(edges, nodes)
+    subsets = _subsets_table(_disease_nodes(nodes, adj))
+    roots = [r.strip() for r in args.under.split(",") if r.strip()]
+    cands = candidate_nodes(subsets, flags, subtree(adj, roots) if roots else None)
+    if args.exact:
+        review_map = exact_snomed_mapping(same_as, concept_pd)
+        mapping = (review_map[review_map["status"] == "used"]
+                   .merge(subsets.rename(columns={"id": "mondo_id"}), on="mondo_id"))
+    else:
+        mapping = build_mondo_to_omop(mondo_edges_df=edges, mondo_nodes_df=nodes,
+                                      concept_df=concept_pd, concept_relationship_df=cr_pd)
+        review_map = pd.DataFrame({
+            "mondo_id": mapping["mondo_id"],
+            "xref": mapping["vocabulary_id"] + ":" + mapping["concept_code"].astype(str),
+            "source_concept_name": mapping["concept_name"],
+            "standard_concept_id": mapping["standard_concept_id"],
+            "standard_concept_name": mapping["standard_concept_name"], "status": "used"})
+    mapping = mapping[mapping["mondo_id"].isin(cands["mondo_id"])]
     rmap = rare_concept_map(mapping, flags)
+    if rmap.empty:
+        raise SystemExit("[wear] no rare Mondo node mapped under these options")
     names = dict(zip(nodes["id"], nodes["name"].astype(str)))
+    review = mapping_review(cands, review_map, names, none_status=(
+        "no_snomed_xref" if args.exact else "no_mappable_xref"))
+    print(f"[wear] {len(cands):,} candidate rare nodes; mapping status: "
+          f"{review.drop_duplicates('mondo_id')['status'].value_counts().to_dict()}",
+          flush=True)
     flags_by_node = {m: [f for f in _SOURCE_FLAGS[1:] if f in g.columns and g[f].max()]
                      for m, g in rmap.groupby("mondo_id")}
-    groups = group_nodes(set(rmap["mondo_id"]), _disease_child_adjacency(edges, nodes))
+    groups = group_nodes(set(rmap["mondo_id"]), adj)
     print(f"[wear] rare map: {rmap['mondo_id'].nunique():,} Mondo nodes -> "
           f"{rmap['standard_concept_id'].nunique():,} standard concepts "
           f"({len(groups):,} are groupings)", flush=True)
@@ -293,7 +388,7 @@ WHERE table_name IN UNNEST(@tables)""",
         cdr, cols.groupby("table_name")["column_name"].apply(set).to_dict())
 
     # 3) per-node and overall counts, computed in BigQuery.
-    ctes = census_ctes(cdr, wear_union)
+    ctes = census_ctes(cdr, wear_union, descendants=not args.no_descendants)
     params = {"mondo": ("STRING", rmap["mondo_id"].tolist()),
               "cid": ("INT64", [int(c) for c in rmap["standard_concept_id"]]),
               "min_days": ("INT64", int(args.min_days))}
@@ -322,12 +417,17 @@ WHERE table_name IN UNNEST(@tables)""",
 
     rows = table_rows(per, names, groups, flags_by_node, n_cond_pop=n_cond_pop,
                       suspect_share=args.suspect_share)
-    overall = {"wear_tables": found, "flags": flags,
+    overall = {"wear_tables": found, "flags": flags, "under": roots,
+               "exact": args.exact, "descendants": not args.no_descendants,
                "n_rare_nodes": int(rmap["mondo_id"].nunique()),
                "n_rare_concepts": int(rmap["standard_concept_id"].nunique()),
                "n_rare_concepts_desc": o["n_desc"], "counts": counts}
     text = format_report(rows, overall, min_days=args.min_days, top=args.top)
-    tag = "_".join(flags) + f"_d{args.min_days}"
+    tag = args.tag or ("_".join(flags) + f"_d{args.min_days}"
+                       + "".join(f"_under-{r.replace(':', '')}" for r in roots)
+                       + ("_exact" if args.exact else "")
+                       + ("_nodesc" if args.no_descendants else ""))
+    review.to_csv(out / f"wearables_rare_{tag}_mapping.tsv", sep="\t", index=False)
     (out / f"wearables_rare_{tag}.md").write_text(text)
     keep = ["mondo_id", "name", "n_dx", "n_wear", "n_wear_before", "n_wear_span",
             "group", "suspect", "sources"]

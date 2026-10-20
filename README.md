@@ -28,7 +28,15 @@ make setup                     # once per VM; add CDR=<project>.<dataset> if nee
 make deps                      # once per VM; upgrades the BigQuery client stack
 make wearables-rare            # default: --flags rare --min-days 30
 make wearables-rare ARGS="--flags orphanet_rare --min-days 90"
+make wearables-rare-autoimmune # rare autoimmune only, exact SNOMED mapping
 ```
+
+`wearables-rare` options for a narrower, more trustworthy mapping: `--under <MONDO id>`
+(one Mondo subtree), `--exact` (only a disease's own SNOMED code, when it is a standard
+Condition concept: no ICD10CM/MeSH re-mapping, which is where most junk mappings come
+from), `--no-descendants` (count the mapped concept only, not its OMOP subtree). Every
+run also writes `*_mapping.tsv`: each candidate disease, its code and whether it was
+used. It has no participant counts.
 
 Outputs go to `$(RUNS_DIR)/<audit>/`, outside the repo. The default `RUNS_DIR` is the
 bucket-backed workspace mount
