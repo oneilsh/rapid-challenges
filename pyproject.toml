@@ -1,0 +1,18 @@
+[project]
+name = "rapidaudit"
+version = "0.1.0"
+description = "RAPID challenge audits (participant counts) on the All of Us Workbench"
+requires-python = ">=3.10"
+# pyspark is NOT listed: audits run on the AoU Dataproc image's own Spark/Python.
+# Local tests cover the pure pandas logic only.
+dependencies = ["pandas"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

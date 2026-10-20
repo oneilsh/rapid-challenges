@@ -1,0 +1,13 @@
+# Participant-level or unmasked outputs must never be committed.
+runs/
+data/
+*.tsv
+*.csv
+*.parquet
+.workspace_env
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
