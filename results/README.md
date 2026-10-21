@@ -18,3 +18,4 @@ commit and the Mondo release. The rest is the run's output, unedited.
 | [2026-10-20-all-rare-default.md](wearables-rare/2026-10-20-all-rare-default.md) | all Mondo `rare` (incl. inferred), full mondo2omop mapping | 23,471 (inflated by junk mappings) |
 | [2026-10-20-autoimmune-exact.md](wearables-rare/2026-10-20-autoimmune-exact.md) | rare autoimmune (MONDO:0007179), exact SNOMED mapping | 1,707 |
 | [2026-10-20-all-rare-exact.md](wearables-rare/2026-10-20-all-rare-exact.md) | all Mondo `rare` (incl. inferred), exact SNOMED mapping | 17,869 (still inflated: common conditions tagged rare) |
+| [2026-10-21-all-rare-exact-dx2.md](wearables-rare/2026-10-21-all-rare-exact-dx2.md) | as above, dx on ≥ 2 dates; adds CDR id and coverage breakdown | 12,469 (top 10 nodes = 55% of rare dx) |
