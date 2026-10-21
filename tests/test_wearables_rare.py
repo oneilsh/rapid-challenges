@@ -116,16 +116,20 @@ def _run_fake_main(tmp_path, monkeypatch, argv):
             return concept
         if "INFORMATION_SCHEMA" in sql:
             return pd.DataFrame({"table_name": ["activity_summary"], "column_name": ["date"]})
+        if "first_hits" in sql:
+            seen["coverage"] = params
+            return pd.DataFrame({"rk": [1, 2], "mondo_id": ["MONDO:A", "MONDO:B"],
+                                 "n_dx": [400, 30], "n_new": [400, 30], "n_only": [380, 5]})
         if "GROUP BY mondo_id" in sql:
             seen["per"] = params
             return pd.DataFrame({"mondo_id": ["MONDO:A", "MONDO:B"], "n_dx": [400, 30],
                                  "n_wear": [50, 7], "n_wear_before": [21, 0],
                                  "n_wear_span": [3, 0]})
         seen["overall"] = params
-        cols = ["n_cond_pop", "n_wear_any", "n_wear_ok", "n_desc", "rare_dx", "rare_wear",
+        cols = ["n_person", "n_cond_pop", "n_wear_any", "n_wear_ok", "n_desc", "rare_dx", "rare_wear",
                 "nongroup_wear", "orphanet_rare_dx", "orphanet_rare_wear", "gard_rare_dx",
                 "gard_rare_wear", "nord_rare_dx", "nord_rare_wear"]
-        return pd.DataFrame([[100_000, 5000, 4000, 2, 430, 57, 57, 400, 50, 30, 7, 0, 0]],
+        return pd.DataFrame([[120_000, 100_000, 5000, 4000, 2, 430, 57, 57, 400, 50, 30, 7, 0, 0]],
                             columns=cols)
 
     monkeypatch.setenv("WORKSPACE_CDR", "p.ds")
@@ -149,7 +153,13 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     assert (b["n_dx"], b["n_wear"], b["n_wear_before"]) == ("30", "<20", "0")
     top = pd.read_csv(out / "wearables_rare_rare_d30.tsv", sep="\t", dtype=str)
     assert list(top["mondo_id"]) == ["MONDO:A"]          # B under the floor
-    assert "| <20 |" in (out / "wearables_rare_rare_d30.md").read_text()
+    md = (out / "wearables_rare_rare_d30.md").read_text()
+    assert "| <20 |" in md and "CDR: `p.ds`" in md
+    assert "| persons in CDR (person table) | 120,000 |" in md
+    assert "## What drives 'persons with any rare dx'" in md
+    assert seen["per"]["min_dx_dates"] == ("INT64", 1)
+    cov = pd.read_csv(out / "wearables_rare_rare_d30_coverage.tsv", sep="\t", dtype=str)
+    assert list(cov["n_only"]) == ["380", "<20"] and "n_new" not in cov
 
 
 def test_exact_snomed_mapping_uses_only_standard_condition_snomed():
@@ -212,3 +222,26 @@ def test_main_exact_under_subtree(tmp_path, monkeypatch):
     assert "MONDO:B" not in review.index
     md = (out / "wearables_rare_ai.md").read_text()
     assert "Scope: under MONDO:AI · exact SNOMED-only mapping · mapped concepts only" in md
+
+
+def test_coverage_checkpoints_never_publish_small_differences():
+    cov = pd.DataFrame({"rk": range(1, 8), "n_new": [500, 300, 5, 5, 100, 10, 10]})
+    pts = dw.coverage_checkpoints(cov, ks=(1, 2, 3, 4, 5, 6))
+    # k=3,4 add < 20 over k=2 (dropped); k=5 adds 110; k=6 adds 10 (dropped);
+    # total 930 is 20 past k=5, so k=5 is safe to keep.
+    assert list(pts["top_k"]) == [1, 2, 5] and list(pts["persons"]) == [500, 800, 910]
+    diffs = pts["persons"].diff().dropna().tolist() + [930 - 910]
+    assert all(d >= 20 for d in diffs)
+
+
+def test_coverage_checkpoints_drop_last_point_too_close_to_total():
+    cov = pd.DataFrame({"rk": [1, 2], "n_new": [100, 7]})
+    assert dw.coverage_checkpoints(cov, ks=(1, 2)).empty   # 100 is only 7 short of 107
+
+
+def test_coverage_and_min_dx_sql_parse():
+    sqlglot = __import__("pytest").importorskip("sqlglot")
+    union, _ = dw.wear_union_sql("p.ds", {"activity_summary": {"date"}})
+    ctes = dw.census_ctes("p.ds", union)
+    assert "HAVING COUNT(DISTINCT CAST(co.condition_start_date AS DATE)) >= @min_dx_dates" in ctes
+    sqlglot.parse_one(ctes + dw.COVERAGE_SELECT, read="bigquery")

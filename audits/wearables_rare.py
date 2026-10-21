@@ -151,8 +151,10 @@ def format_report(rows: pd.DataFrame, overall: dict, *, min_days, top,
                   floor=EGRESS_FLOOR) -> str:
     """Markdown: the overall counts, then the top-`top` rare diseases by n_wear. Rows
     under the floor are dropped before this is called (`table_rows`)."""
-    L = ["# Wearables × rare disease (All of Us)", "",
-         f"Fitbit tables found: {', '.join(overall['wear_tables']) or 'NONE'} · "
+    L = ["# Wearables × rare disease (All of Us)", ""]
+    if overall.get("cdr"):
+        L += [f"CDR: `{overall['cdr']}`", ""]
+    L += [f"Fitbit tables found: {', '.join(overall['wear_tables']) or 'NONE'} · "
          f"usable wear = >= {min_days} distinct days · rare = Mondo subsets "
          f"{', '.join(overall['flags'])} · {overall['n_rare_nodes']:,} rare Mondo nodes "
          f"mapped to {overall['n_rare_concepts']:,} standard concepts "
@@ -160,7 +162,9 @@ def format_report(rows: pd.DataFrame, overall: dict, *, min_days, top,
     scope = [f"under {', '.join(overall['under'])}" if overall.get("under") else "",
              "exact SNOMED-only mapping" if overall.get("exact") else "",
              "mapped concepts only (no descendants)"
-             if overall.get("descendants") is False else ""]
+             if overall.get("descendants") is False else "",
+             f"dx on >= {overall['min_dx_dates']} distinct dates"
+             if overall.get("min_dx_dates", 1) > 1 else ""]
     if any(scope):
         L += ["Scope: " + " · ".join(x for x in scope if x), ""]
     L += ["| population | persons |", "|---|--:|"]
@@ -217,7 +221,9 @@ def wear_union_sql(cdr: str, columns_by_table: dict) -> tuple[str, list]:
 
 def census_ctes(cdr: str, wear_union: str, descendants: bool = True) -> str:
     """Shared WITH clause. Params: @mondo ARRAY<STRING> and @cid ARRAY<INT64> (parallel:
-    the rare map), @min_days INT64. `j` = one row per (person, rare node) with the first
+    the rare map), @min_days INT64, @min_dx_dates INT64 (a person counts for a node only
+    with in-node diagnoses on that many distinct dates). `j` = one row per (person, rare
+    node) with the first
     diagnosis (in the concept's OMOP subtree, or the concept alone if not
     `descendants`) and that person's Fitbit wear."""
     node_concepts = (f"""
@@ -235,7 +241,8 @@ dx AS (
   SELECT co.person_id, nc.mondo_id, MIN(CAST(co.condition_start_date AS DATE)) AS first_dx
   FROM `{cdr}.condition_occurrence` co
   JOIN node_concepts nc ON co.condition_concept_id = nc.cid
-  GROUP BY 1, 2),
+  GROUP BY 1, 2
+  HAVING COUNT(DISTINCT CAST(co.condition_start_date AS DATE)) >= @min_dx_dates),
 wear_days AS (
     {wear_union}),
 wear AS (
@@ -268,6 +275,7 @@ def overall_select(cdr: str) -> str:
         f"AS {f}_wear" for f in _SOURCE_FLAGS[1:4])
     return f"""
 SELECT
+  (SELECT COUNT(*) FROM `{cdr}.person`) AS n_person,
   (SELECT COUNT(DISTINCT person_id) FROM `{cdr}.condition_occurrence`) AS n_cond_pop,
   (SELECT COUNT(*) FROM wear) AS n_wear_any,
   (SELECT COUNTIF(fb_days >= @min_days) FROM wear) AS n_wear_ok,
@@ -278,6 +286,67 @@ SELECT
 {per_src}
 FROM j
 """
+
+
+# Appended to census_ctes(...): ranks nodes by n_dx; per rank, the persons whose
+# highest-ranked rare node it is (n_new; their running sum = union of the top k) and the
+# persons for whom it is the only rare node (n_only).
+COVERAGE_SELECT = """,
+ranked AS (
+  SELECT mondo_id, COUNT(*) AS n_dx,
+         ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, mondo_id) AS rk
+  FROM j GROUP BY mondo_id),
+pr AS (
+  SELECT j.person_id, MIN(r.rk) AS first_rk, COUNT(*) AS n_nodes,
+         ANY_VALUE(j.mondo_id) AS any_node
+  FROM j JOIN ranked r USING (mondo_id) GROUP BY j.person_id),
+first_hits AS (SELECT first_rk AS rk, COUNT(*) AS n_new FROM pr GROUP BY first_rk),
+only_hits AS (
+  SELECT any_node AS mondo_id, COUNT(*) AS n_only FROM pr WHERE n_nodes = 1
+  GROUP BY any_node)
+SELECT r.rk, r.mondo_id, r.n_dx, COALESCE(f.n_new, 0) AS n_new,
+       COALESCE(o.n_only, 0) AS n_only
+FROM ranked r LEFT JOIN first_hits f USING (rk) LEFT JOIN only_hits o USING (mondo_id)
+ORDER BY r.rk
+"""
+
+COVERAGE_KS = (1, 5, 10, 25, 50, 100, 250, 500, 1000)
+
+
+def coverage_checkpoints(cov: pd.DataFrame, ks=COVERAGE_KS,
+                         floor=EGRESS_FLOOR) -> pd.DataFrame:
+    """Persons covered by the k largest rare nodes, at checkpoints k. A checkpoint is
+    kept only if it adds >= `floor` persons over the previous one, and the last kept one
+    must be >= `floor` short of the total (or equal to it), so no published difference
+    is a small count. Per-rank increments (n_new) are never published."""
+    cum = cov.sort_values("rk")["n_new"].cumsum().tolist()
+    total = cum[-1] if cum else 0
+    kept, last = [], 0
+    for k in ks:
+        if k > len(cum):
+            break
+        if cum[k - 1] - last >= floor:
+            kept.append((k, cum[k - 1]))
+            last = cum[k - 1]
+    while kept and 0 < total - kept[-1][1] < floor:
+        kept.pop()
+    return pd.DataFrame({"top_k": [k for k, _ in kept], "persons": [c for _, c in kept],
+                         "pct_of_rare_dx": [round(100 * c / max(total, 1), 1)
+                                            for _, c in kept]})
+
+
+def format_coverage(points: pd.DataFrame, cov: pd.DataFrame, names: dict, total: int,
+                    top: int = 25) -> str:
+    L = ["", f"## What drives 'persons with any rare dx' ({total:,})", "",
+         "Rare nodes ranked by n_dx; persons covered by the k largest nodes:", "",
+         "| top k nodes | persons | % of rare dx |", "|--:|--:|--:|"]
+    L += [f"| {r.top_k} | {r.persons:,} | {r.pct_of_rare_dx} |" for r in points.itertuples()]
+    L += ["", f"Largest {top} nodes (only = persons with no other rare dx):", "",
+          "| rank | Mondo | disease | n_dx | only |", "|--:|---|---|--:|--:|"]
+    for r in cov.sort_values("rk").head(top).itertuples():
+        L.append(f"| {r.rk} | {r.mondo_id} | {str(names.get(r.mondo_id, r.mondo_id))[:48]} | "
+                 f"{cell(r.n_dx)} | {cell(r.n_only)} |")
+    return "\n".join(L) + "\n"
 
 
 def main(argv=None) -> int:
@@ -301,6 +370,9 @@ def main(argv=None) -> int:
                         "Condition concept (no ICD10CM/MeSH 'Maps to' hop)")
     p.add_argument("--no-descendants", action="store_true",
                    help="count the mapped standard concept only, not its OMOP subtree")
+    p.add_argument("--min-dx-dates", type=int, default=1,
+                   help="count a diagnosis only if in-node codes occur on at least this "
+                        "many distinct dates (2 drops one-off rule-out codes)")
     p.add_argument("--tag", default="",
                    help="output file tag (default: built from the options)")
     args = p.parse_args(argv)
@@ -391,7 +463,8 @@ WHERE table_name IN UNNEST(@tables)""",
     ctes = census_ctes(cdr, wear_union, descendants=not args.no_descendants)
     params = {"mondo": ("STRING", rmap["mondo_id"].tolist()),
               "cid": ("INT64", [int(c) for c in rmap["standard_concept_id"]]),
-              "min_days": ("INT64", int(args.min_days))}
+              "min_days": ("INT64", int(args.min_days)),
+              "min_dx_dates": ("INT64", int(args.min_dx_dates))}
     print("[wear] per-node counts query…", flush=True)
     per = query(client, ctes + PER_NODE_SELECT, params)
     src_ids = {f: sorted(rmap.loc[rmap[f] == 1, "mondo_id"].unique()) if f in rmap else []
@@ -402,8 +475,11 @@ WHERE table_name IN UNNEST(@tables)""",
         **{f: ("STRING", ids) for f, ids in src_ids.items()}}).iloc[0]
     o = {k: int(v) for k, v in o.items()}
 
+    print("[wear] coverage query…", flush=True)
+    cov = query(client, ctes + COVERAGE_SELECT, params)
     n_cond_pop = o["n_cond_pop"]
     counts = {
+        "persons in CDR (person table)": o["n_person"],
         "persons with any condition": n_cond_pop,
         "persons with any Fitbit day": o["n_wear_any"],
         f"persons with >= {args.min_days} Fitbit days": o["n_wear_ok"],
@@ -417,17 +493,26 @@ WHERE table_name IN UNNEST(@tables)""",
 
     rows = table_rows(per, names, groups, flags_by_node, n_cond_pop=n_cond_pop,
                       suspect_share=args.suspect_share)
-    overall = {"wear_tables": found, "flags": flags, "under": roots,
+    overall = {"cdr": cdr, "wear_tables": found, "flags": flags, "under": roots,
+               "min_dx_dates": args.min_dx_dates,
                "exact": args.exact, "descendants": not args.no_descendants,
                "n_rare_nodes": int(rmap["mondo_id"].nunique()),
                "n_rare_concepts": int(rmap["standard_concept_id"].nunique()),
                "n_rare_concepts_desc": o["n_desc"], "counts": counts}
     text = format_report(rows, overall, min_days=args.min_days, top=args.top)
+    if len(cov):
+        text += format_coverage(coverage_checkpoints(cov), cov, names, o["rare_dx"])
     tag = args.tag or ("_".join(flags) + f"_d{args.min_days}"
                        + "".join(f"_under-{r.replace(':', '')}" for r in roots)
                        + ("_exact" if args.exact else "")
-                       + ("_nodesc" if args.no_descendants else ""))
+                       + ("_nodesc" if args.no_descendants else "")
+                       + (f"_dx{args.min_dx_dates}" if args.min_dx_dates > 1 else ""))
     review.to_csv(out / f"wearables_rare_{tag}_mapping.tsv", sep="\t", index=False)
+    if len(cov):
+        cov_out = cov.assign(name=cov["mondo_id"].map(lambda m: names.get(m, m)))
+        mask_counts(cov_out[["rk", "mondo_id", "name", "n_dx", "n_only"]],
+                    ["n_dx", "n_only"]).to_csv(out / f"wearables_rare_{tag}_coverage.tsv",
+                                               sep="\t", index=False)
     (out / f"wearables_rare_{tag}.md").write_text(text)
     keep = ["mondo_id", "name", "n_dx", "n_wear", "n_wear_before", "n_wear_span",
             "group", "suspect", "sources"]
