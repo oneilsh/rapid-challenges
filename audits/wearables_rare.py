@@ -381,7 +381,9 @@ def main(argv=None) -> int:
     bad = [f for f in flags if f not in _SOURCE_FLAGS]
     if bad:
         raise SystemExit(f"unknown --flags {bad}; known: {_SOURCE_FLAGS}")
-    out = Path(args.out_dir)
+    # One subfolder per CDR dataset (e.g. R2024Q3R8), so runs on different releases
+    # never overwrite each other.
+    out = Path(args.out_dir) / cdr.split(".")[-1]
     out.mkdir(parents=True, exist_ok=True)
     client = bq_client(billing)
 

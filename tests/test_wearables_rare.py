@@ -139,6 +139,7 @@ def _run_fake_main(tmp_path, monkeypatch, argv):
     monkeypatch.setattr(dw, "download_cached", lambda v, f, c: files[f])
     out = tmp_path / "out"
     assert dw.main(["--out-dir", str(out), *argv]) == 0
+    out = out / "ds"                                    # per-CDR subfolder (p.ds -> ds)
     return out, seen
 
 

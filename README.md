@@ -38,7 +38,8 @@ from), `--no-descendants` (count the mapped concept only, not its OMOP subtree).
 run also writes `*_mapping.tsv`: each candidate disease, its code and whether it was
 used. It has no participant counts.
 
-Outputs go to `$(RUNS_DIR)/<audit>/`, outside the repo. The default `RUNS_DIR` is the
+Outputs go to `$(RUNS_DIR)/<audit>/<CDR dataset>/` (e.g. `…/wearables-rare/R2024Q3R8/`),
+outside the repo, so runs on different CDR releases don't overwrite each other. The default `RUNS_DIR` is the
 bucket-backed workspace mount
 `/home/jupyter/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy`,
 so results survive VM deletion. Override with `RUNS_DIR=...`.
