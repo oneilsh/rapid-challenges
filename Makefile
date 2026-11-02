@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune plot-wearables-timing mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -31,6 +31,8 @@ help:
 	@echo "      ARGS='--no-intraday --window-days 180'"
 	@echo "Locally:"
 	@echo "  make test                  - unit tests (uv run pytest)"
+	@echo "  make plot-wearables-timing REPORT=results/wearables-timing/<run>.md"
+	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
 	@echo "                               names (tx.fhir.org) -> results/mondo-snomed-review/"
 
@@ -80,3 +82,8 @@ wearables-timing: $(WORKSPACE_ENV)
 
 wearables-timing-autoimmune:
 	$(MAKE) wearables-timing ARGS="$(AUTOIMMUNE_ARGS) $(ARGS)"
+
+# PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
+REPORT ?=
+plot-wearables-timing:
+	PYTHONPATH=$(REPO_ROOT) uv run python -m audits.wearables_timing_plots $(REPORT)

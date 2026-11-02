@@ -43,7 +43,9 @@ used. It has no participant counts.
 `--window-days` / `--min-window-days` (default: >= 30 days of data in the 365 days before
 and after the diagnosis), and `--no-intraday` to skip the large minute-level tables. Per
 disease and kind of data it reports how many persons have data before / after the first
-diagnosis, quartiles of days, and binned counts.
+diagnosis, quartiles of days, and binned counts. It also writes PNG plots (drawn from the
+masked report only); `make plot-wearables-timing REPORT=results/wearables-timing/<run>.md`
+redraws them locally from a filed report.
 
 Outputs go to `$(RUNS_DIR)/<audit>/<CDR dataset>/` (e.g. `…/wearables-rare/R2024Q3R8/`),
 outside the repo, so runs on different CDR releases don't overwrite each other. The default `RUNS_DIR` is the

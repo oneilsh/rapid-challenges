@@ -123,3 +123,21 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     assert set(tsv["n_wear"]) <= {"0", "30", "<20"}
     md = (out / "wearables_timing_ai.md").read_text()
     assert "CDR: `p.ds`" in md and "| MONDO:A | disease A | 300 | 30 |" in md
+
+
+def test_plots_read_only_the_masked_report(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("matplotlib")
+    from audits import wearables_timing_plots as wp
+    prof = wt.profile(_per(), _n_dx(), min_window_days=10)
+    meta = {"cdr": "p.ds", "wear_tables": ["activity_summary"], "flags": ["x"],
+            "n_rare_nodes": 2, "window_days": 365, "min_window_days": 30}
+    md = wt.format_report(prof, {"M:1": "foo"}, meta, top=10)
+    t = wp.read_report(md)
+    assert set(t) == {"pooled", "bins_before", "bins_after", "diseases", "kinds"}
+    assert wp.parse_count("<20") == wp.MASK and wp.parse_count("1,808") == 1808
+    assert wp.parse_iqr("471 (180–1,052)") == (471, 180, 1052) and wp.parse_iqr("—") is None
+    paths = wp.write_plots(md, tmp_path / "plots")
+    assert [p.name for p in paths] == ["pooled_bins.png", "pooled_medians.png",
+                                       "disease_counts.png", "disease_medians.png"]
+    assert all(p.stat().st_size > 0 for p in paths)

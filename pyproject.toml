@@ -9,6 +9,7 @@ dependencies = ["pandas"]
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.10.9",
     "pytest",
     "sqlglot>=30.23.0",
 ]

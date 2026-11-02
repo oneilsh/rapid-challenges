@@ -19,3 +19,9 @@ commit and the Mondo release. The rest is the run's output, unedited.
 | [2026-10-20-autoimmune-exact.md](wearables-rare/2026-10-20-autoimmune-exact.md) | rare autoimmune (MONDO:0007179), exact SNOMED mapping | 1,707 |
 | [2026-10-20-all-rare-exact.md](wearables-rare/2026-10-20-all-rare-exact.md) | all Mondo `rare` (incl. inferred), exact SNOMED mapping | 17,869 (still inflated: common conditions tagged rare) |
 | [2026-10-21-all-rare-exact-dx2.md](wearables-rare/2026-10-21-all-rare-exact-dx2.md) | as above, dx on ≥ 2 dates; adds CDR id and coverage breakdown | 12,469 (top 10 nodes = 55% of rare dx) |
+
+### wearables-timing
+
+| file | scope | headline |
+|---|---|--:|
+| [2026-11-02-autoimmune-exact.md](wearables-timing/2026-11-02-autoimmune-exact.md) ([plots](wearables-timing/2026-11-02-autoimmune-exact/)) | rare autoimmune (MONDO:0007179), exact SNOMED mapping; Fitbit days by kind before / after first dx | 306 with ≥ 30 days in the year before and after (482 with any pre-dx day) |

@@ -357,6 +357,13 @@ WHERE table_name IN UNNEST(@tables)""",
     rm.review.to_csv(out / f"wearables_timing_{tag}_mapping.tsv", sep="\t", index=False)
     (out / f"wearables_timing_{tag}.json").write_text(json.dumps(meta, indent=1,
                                                                  default=str))
+    try:  # plots are drawn from the masked report text only
+        from audits.wearables_timing_plots import write_plots
+        for path in write_plots(text, out / f"wearables_timing_{tag}_plots"):
+            print(f"[timing] plot {path}", flush=True)
+    except ImportError as e:
+        print(f"[timing] no plots ({e}); install matplotlib or run "
+              "`make plot-wearables-timing REPORT=...` locally", flush=True)
     print(text, flush=True)
     print(f"[timing] wrote {out}/wearables_timing_{tag}.md/.tsv/.json (cells 1-19 as "
           f"<20; quartiles only where >= {EGRESS_FLOOR} persons)", flush=True)
