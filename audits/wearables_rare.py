@@ -45,6 +45,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -349,6 +350,72 @@ def format_coverage(points: pd.DataFrame, cov: pd.DataFrame, names: dict, total:
     return "\n".join(L) + "\n"
 
 
+def build_rare_map(client, cdr: str, *, flags, roots, exact: bool, mondo_version: str,
+                   cache_dir: Path) -> SimpleNamespace:
+    """Mondo rare nodes (any of `flags`, under `roots` if given) -> OMOP standard
+    Condition concepts, by the mondo2omop recipe or, if `exact`, each node's own standard
+    SNOMED concept. Only the concepts the Mondo xrefs can hit, plus their 'Maps to'
+    targets, are fetched. Returns `rmap` (rare_concept_map), `names` (Mondo id -> label),
+    `review` (mapping_review) and `adj` (Mondo disease child adjacency)."""
+    cache = Path(cache_dir)
+    edges = pd.read_csv(download_cached(mondo_version, "mondo_edges.tsv", cache),
+                        sep="\t", low_memory=False)
+    nodes = pd.read_csv(download_cached(mondo_version, "mondo_nodes.tsv", cache),
+                        sep="\t", low_memory=False)
+    same_as = seed_source_xrefs(mondo_edges_df=edges, mondo_nodes_df=nodes,
+                                restrict_mondo_ids=set(nodes["id"]))
+    keys = sorted(set(same_as["vocabulary_id"] + "|" + same_as["concept_code"].astype(str)))
+    src_cte = f"""
+WITH src AS (
+  SELECT concept_id, concept_name, vocabulary_id, domain_id, concept_code, standard_concept
+  FROM `{cdr}.concept`
+  WHERE vocabulary_id IN ('SNOMED', 'ICD10CM', 'MeSH')
+    AND CONCAT(vocabulary_id, '|', concept_code) IN UNNEST(@keys)),
+mt AS (
+  SELECT concept_id_1, concept_id_2, relationship_id
+  FROM `{cdr}.concept_relationship`
+  WHERE relationship_id = 'Maps to' AND concept_id_1 IN (SELECT concept_id FROM src))
+"""
+    kp = {"keys": ("STRING", keys)}
+    cr_pd = query(client, src_cte + "SELECT * FROM mt", kp)
+    concept_pd = query(client, src_cte + f"""
+SELECT * FROM src
+UNION DISTINCT
+SELECT concept_id, concept_name, vocabulary_id, domain_id, concept_code, standard_concept
+FROM `{cdr}.concept`
+WHERE vocabulary_id IN ('SNOMED', 'ICD10CM', 'MeSH')
+  AND concept_id IN (SELECT concept_id_2 FROM mt)""", kp)
+    print(f"[wear] {len(keys):,} Mondo xrefs -> {len(concept_pd):,} concepts, "
+          f"{len(cr_pd):,} 'Maps to' rows", flush=True)
+    adj = _disease_child_adjacency(edges, nodes)
+    subsets = _subsets_table(_disease_nodes(nodes, adj))
+    cands = candidate_nodes(subsets, flags, subtree(adj, roots) if roots else None)
+    if exact:
+        review_map = exact_snomed_mapping(same_as, concept_pd)
+        mapping = (review_map[review_map["status"] == "used"]
+                   .merge(subsets.rename(columns={"id": "mondo_id"}), on="mondo_id"))
+    else:
+        mapping = build_mondo_to_omop(mondo_edges_df=edges, mondo_nodes_df=nodes,
+                                      concept_df=concept_pd, concept_relationship_df=cr_pd)
+        review_map = pd.DataFrame({
+            "mondo_id": mapping["mondo_id"],
+            "xref": mapping["vocabulary_id"] + ":" + mapping["concept_code"].astype(str),
+            "source_concept_name": mapping["concept_name"],
+            "standard_concept_id": mapping["standard_concept_id"],
+            "standard_concept_name": mapping["standard_concept_name"], "status": "used"})
+    mapping = mapping[mapping["mondo_id"].isin(cands["mondo_id"])]
+    rmap = rare_concept_map(mapping, flags)
+    if rmap.empty:
+        raise SystemExit("[wear] no rare Mondo node mapped under these options")
+    names = dict(zip(nodes["id"], nodes["name"].astype(str)))
+    review = mapping_review(cands, review_map, names, none_status=(
+        "no_snomed_xref" if exact else "no_mappable_xref"))
+    print(f"[wear] {len(cands):,} candidate rare nodes; mapping status: "
+          f"{review.drop_duplicates('mondo_id')['status'].value_counts().to_dict()}",
+          flush=True)
+    return SimpleNamespace(rmap=rmap, names=names, review=review, adj=adj)
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--out-dir", required=True)
@@ -387,65 +454,12 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     client = bq_client(billing)
 
-    # 1) Mondo rare nodes -> OMOP standard conditions (mondo2omop recipe). Only the
-    #    concepts the Mondo xrefs can hit, plus their 'Maps to' targets, are fetched.
-    cache = Path(args.mondo_cache_dir)
-    edges = pd.read_csv(download_cached(args.mondo_version, "mondo_edges.tsv", cache),
-                        sep="\t", low_memory=False)
-    nodes = pd.read_csv(download_cached(args.mondo_version, "mondo_nodes.tsv", cache),
-                        sep="\t", low_memory=False)
-    same_as = seed_source_xrefs(mondo_edges_df=edges, mondo_nodes_df=nodes,
-                                restrict_mondo_ids=set(nodes["id"]))
-    keys = sorted(set(same_as["vocabulary_id"] + "|" + same_as["concept_code"].astype(str)))
-    src_cte = f"""
-WITH src AS (
-  SELECT concept_id, concept_name, vocabulary_id, domain_id, concept_code, standard_concept
-  FROM `{cdr}.concept`
-  WHERE vocabulary_id IN ('SNOMED', 'ICD10CM', 'MeSH')
-    AND CONCAT(vocabulary_id, '|', concept_code) IN UNNEST(@keys)),
-mt AS (
-  SELECT concept_id_1, concept_id_2, relationship_id
-  FROM `{cdr}.concept_relationship`
-  WHERE relationship_id = 'Maps to' AND concept_id_1 IN (SELECT concept_id FROM src))
-"""
-    kp = {"keys": ("STRING", keys)}
-    cr_pd = query(client, src_cte + "SELECT * FROM mt", kp)
-    concept_pd = query(client, src_cte + f"""
-SELECT * FROM src
-UNION DISTINCT
-SELECT concept_id, concept_name, vocabulary_id, domain_id, concept_code, standard_concept
-FROM `{cdr}.concept`
-WHERE vocabulary_id IN ('SNOMED', 'ICD10CM', 'MeSH')
-  AND concept_id IN (SELECT concept_id_2 FROM mt)""", kp)
-    print(f"[wear] {len(keys):,} Mondo xrefs -> {len(concept_pd):,} concepts, "
-          f"{len(cr_pd):,} 'Maps to' rows", flush=True)
-    adj = _disease_child_adjacency(edges, nodes)
-    subsets = _subsets_table(_disease_nodes(nodes, adj))
+    # 1) Mondo rare nodes -> OMOP standard conditions.
     roots = [r.strip() for r in args.under.split(",") if r.strip()]
-    cands = candidate_nodes(subsets, flags, subtree(adj, roots) if roots else None)
-    if args.exact:
-        review_map = exact_snomed_mapping(same_as, concept_pd)
-        mapping = (review_map[review_map["status"] == "used"]
-                   .merge(subsets.rename(columns={"id": "mondo_id"}), on="mondo_id"))
-    else:
-        mapping = build_mondo_to_omop(mondo_edges_df=edges, mondo_nodes_df=nodes,
-                                      concept_df=concept_pd, concept_relationship_df=cr_pd)
-        review_map = pd.DataFrame({
-            "mondo_id": mapping["mondo_id"],
-            "xref": mapping["vocabulary_id"] + ":" + mapping["concept_code"].astype(str),
-            "source_concept_name": mapping["concept_name"],
-            "standard_concept_id": mapping["standard_concept_id"],
-            "standard_concept_name": mapping["standard_concept_name"], "status": "used"})
-    mapping = mapping[mapping["mondo_id"].isin(cands["mondo_id"])]
-    rmap = rare_concept_map(mapping, flags)
-    if rmap.empty:
-        raise SystemExit("[wear] no rare Mondo node mapped under these options")
-    names = dict(zip(nodes["id"], nodes["name"].astype(str)))
-    review = mapping_review(cands, review_map, names, none_status=(
-        "no_snomed_xref" if args.exact else "no_mappable_xref"))
-    print(f"[wear] {len(cands):,} candidate rare nodes; mapping status: "
-          f"{review.drop_duplicates('mondo_id')['status'].value_counts().to_dict()}",
-          flush=True)
+    rm = build_rare_map(client, cdr, flags=flags, roots=roots, exact=args.exact,
+                        mondo_version=args.mondo_version,
+                        cache_dir=Path(args.mondo_cache_dir))
+    rmap, names, review, adj = rm.rmap, rm.names, rm.review, rm.adj
     flags_by_node = {m: [f for f in _SOURCE_FLAGS[1:] if f in g.columns and g[f].max()]
                      for m, g in rmap.groupby("mondo_id")}
     groups = group_nodes(set(rmap["mondo_id"]), adj)

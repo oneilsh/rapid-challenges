@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -26,6 +26,9 @@ help:
 	@echo "  make wearables-rare-exact  - all Mondo rare diseases, exact SNOMED mapping"
 	@echo "  make wearables-rare-autoimmune - same, rare autoimmune diseases only, exact SNOMED"
 	@echo "                               mapping (add ARGS=--no-descendants for codes only)"
+	@echo "  make wearables-timing-autoimmune - rare autoimmune: Fitbit data by kind, before vs"
+	@echo "                               after first dx -> RUNS_DIR/wearables-timing/"
+	@echo "      ARGS='--no-intraday --window-days 180'"
 	@echo "Locally:"
 	@echo "  make test                  - unit tests (uv run pytest)"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
@@ -66,3 +69,14 @@ wearables-rare-exact:
 AUTOIMMUNE_ARGS = --under MONDO:0007179 --flags orphanet_rare,gard_rare,nord_rare,mondo_rare --exact
 wearables-rare-autoimmune:
 	$(MAKE) wearables-rare ARGS="$(AUTOIMMUNE_ARGS) $(ARGS)"
+
+# Fitbit data by kind (daily summaries + intraday), before vs after each person's first
+# diagnosis. Same disease selection options as wearables-rare.
+TIMING_OUT ?= $(RUNS_DIR)/wearables-timing
+wearables-timing: $(WORKSPACE_ENV)
+	mkdir -p "$(TIMING_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_timing.py \
+	    --out-dir "$(TIMING_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
+	    $(ARGS) 2>&1 | tee -a "$(TIMING_OUT)/wearables_timing_log.md"
+
+wearables-timing-autoimmune:
+	$(MAKE) wearables-timing ARGS="$(AUTOIMMUNE_ARGS) $(ARGS)"

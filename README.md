@@ -9,7 +9,7 @@ egress-safe tables.
 
 | path | what |
 |---|---|
-| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease) |
+| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease; `wearables_timing.py`: Fitbit data by kind before / after first diagnosis) |
 | `rapidaudit/egress.py` | the small-count rule: 1–19 → `<20`, 0 stays 0 |
 | `rapidaudit/aou.py` | workspace env, `query` (parameterized SQL → pandas), cached Mondo download |
 | `rapidaudit/mondo_to_omop_mapping.py` | Mondo → OMOP standard Condition (port of Monarch's mondo2omop) |
@@ -29,6 +29,7 @@ make deps                      # once per VM; upgrades the BigQuery client stack
 make wearables-rare            # default: --flags rare --min-days 30
 make wearables-rare ARGS="--flags orphanet_rare --min-days 90"
 make wearables-rare-autoimmune # rare autoimmune only, exact SNOMED mapping
+make wearables-timing-autoimmune  # same diseases: Fitbit days by kind, before vs after first dx
 ```
 
 `wearables-rare` options for a narrower, more trustworthy mapping: `--under <MONDO id>`
@@ -37,6 +38,12 @@ Condition concept: no ICD10CM/MeSH re-mapping, which is where most junk mappings
 from), `--no-descendants` (count the mapped concept only, not its OMOP subtree). Every
 run also writes `*_mapping.tsv`: each candidate disease, its code and whether it was
 used. It has no participant counts.
+
+`wearables-timing` takes the same disease options (`--flags`, `--under`, `--exact`, …) plus
+`--window-days` / `--min-window-days` (default: >= 30 days of data in the 365 days before
+and after the diagnosis), and `--no-intraday` to skip the large minute-level tables. Per
+disease and kind of data it reports how many persons have data before / after the first
+diagnosis, quartiles of days, and binned counts.
 
 Outputs go to `$(RUNS_DIR)/<audit>/<CDR dataset>/` (e.g. `…/wearables-rare/R2024Q3R8/`),
 outside the repo, so runs on different CDR releases don't overwrite each other. The default `RUNS_DIR` is the
