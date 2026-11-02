@@ -45,7 +45,9 @@ and after the diagnosis), and `--no-intraday` to skip the large minute-level tab
 disease and kind of data it reports how many persons have data before / after the first
 diagnosis, quartiles of days, and binned counts. It also writes PNG plots (drawn from the
 masked report only); `make plot-wearables-timing REPORT=results/wearables-timing/<run>.md`
-redraws them locally from a filed report.
+redraws them locally from a filed report. `make wearables-timing-patients` adds
+PARTICIPANT-LEVEL faceted dot plots (one point per person) in a `*_DO_NOT_EGRESS` folder:
+view them on the Workbench only; `.gitignore` blocks that name.
 
 Outputs go to `$(RUNS_DIR)/<audit>/<CDR dataset>/` (e.g. `…/wearables-rare/R2024Q3R8/`),
 outside the repo, so runs on different CDR releases don't overwrite each other. The default `RUNS_DIR` is the

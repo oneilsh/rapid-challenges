@@ -236,6 +236,98 @@ def plot_disease_medians(t: dict, plt):
     return fig
 
 
+# --- participant-level (Workbench only) ------------------------------------------------
+# Everything below draws one point per person from the PER_PERSON_SELECT rows. The output
+# is participant-level: it must stay on the Workbench (written under a DO_NOT_EGRESS
+# folder, which .gitignore blocks) and is never part of a report.
+NO_EGRESS = "PARTICIPANT-LEVEL: do not egress"
+PATIENT_PLOTS = {
+    # name: (x column, y column, x label, y label, title, transform)
+    "patients_days": ("days_before", "days_after", "days of data before first dx",
+                      "days of data on/after first dx",
+                      "Days of Fitbit data before vs after the first diagnosis", None),
+    "patients_span": ("lead_days", "follow_days", "first wear day (years relative to first dx)",
+                      "last wear day (years relative to first dx)",
+                      "When each person's Fitbit data starts and ends, relative to the "
+                      "first diagnosis", "span"),
+}
+
+
+def facet_order(per: pd.DataFrame, kind: str, max_facets: int, all_id: str) -> list:
+    """ALL first, then diseases by persons with this kind of data, largest first."""
+    n = per[per["src"] == kind].groupby("mondo_id").size().sort_values(ascending=False)
+    rest = [m for m in n.index if m != all_id]
+    return ([all_id] if all_id in n.index else []) + rest[:max_facets]
+
+
+def plot_patient_facets(per: pd.DataFrame, names: dict, plt, *, x, y, xlabel, ylabel,
+                        title, transform=None, kind="any", max_facets=20,
+                        all_id="ALL", min_window_days=30):
+    """Faceted dot plot, one facet per disease, one point per person (kind `kind`).
+    Day counts go on symmetric-log axes (0 and thousands both readable); the "span"
+    transform plots first / last wear day in years relative to the dx, linear."""
+    order = facet_order(per, kind, max_facets, all_id)
+    d = per[per["src"] == kind]
+    ncol = 5
+    nrow = max(1, math.ceil(len(order) / ncol))
+    fig = plt.figure(figsize=(3.0 * ncol, 2.8 * nrow + 0.8), facecolor=SURFACE)
+    axes = fig.subplots(nrow, ncol, sharex=True, sharey=True, squeeze=False).ravel()
+    for ax in axes[len(order):]:
+        ax.axis("off")
+    for ax, m in zip(axes, order):
+        g = d[d["mondo_id"] == m]
+        xs, ys = g[x].astype(float), g[y].astype(float)
+        if transform == "span":           # years relative to dx (negative = before)
+            xs, ys = -xs / 365.25, ys / 365.25
+        _style(ax)
+        ax.grid(axis="y", color=GRID, linewidth=0.8)
+        ax.axvline(0, color=MUTED, linewidth=0.8)
+        ax.axhline(0, color=MUTED, linewidth=0.8)
+        if transform is None:
+            ax.axvline(min_window_days, color=MUTED, linewidth=0.8, linestyle=":")
+            ax.axhline(min_window_days, color=MUTED, linewidth=0.8, linestyle=":")
+        ax.scatter(xs, ys, s=9, color=BEFORE, alpha=0.45, linewidths=0)
+        if transform is None:
+            ax.set_xscale("symlog", linthresh=30)
+            ax.set_yscale("symlog", linthresh=30)
+        label = "all selected diseases" if m == all_id else names.get(m, m)
+        ax.set_title(f"{str(label)[:34]} (n={len(g):,})", fontsize=8.5, color=INK, loc="left")
+    if transform is None:
+        fmt = plt.FuncFormatter(lambda v, _: f"{int(v):,}")
+        axes[0].xaxis.set_major_formatter(fmt)
+        axes[0].yaxis.set_major_formatter(fmt)
+    fig.supxlabel(xlabel, fontsize=9, color=INK2)
+    fig.supylabel(ylabel, fontsize=9, color=INK2)
+    fig.suptitle(f"{title}; one point per person, kind = {kind}  ·  {NO_EGRESS}",
+                 x=0.01, ha="left", fontsize=11, color=INK)
+    fig.tight_layout()
+    return fig
+
+
+def write_patient_plots(per: pd.DataFrame, names: dict, out_dir: Path, *, kinds=("any",),
+                        max_facets=20, all_id="ALL", min_window_days=30) -> list[Path]:
+    """Participant-level PNGs into `out_dir`, which must be named *DO_NOT_EGRESS*."""
+    if "DO_NOT_EGRESS" not in out_dir.name:
+        raise ValueError(f"participant-level plots need a DO_NOT_EGRESS folder, got {out_dir}")
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for kind in kinds:
+        for name, (x, y, xl, yl, title, tr) in PATIENT_PLOTS.items():
+            fig = plot_patient_facets(per, names, plt, x=x, y=y, xlabel=xl, ylabel=yl,
+                                      title=title, transform=tr, kind=kind,
+                                      max_facets=max_facets, all_id=all_id,
+                                      min_window_days=min_window_days)
+            path = out_dir / f"{name}_{kind}.png"
+            fig.savefig(path, dpi=150, facecolor=SURFACE, bbox_inches="tight",
+                        pad_inches=0.2)
+            plt.close(fig)
+            written.append(path)
+    return written
+
+
 PLOTS = {"pooled_bins": plot_pooled_bins, "pooled_medians": plot_pooled_medians,
          "disease_counts": plot_disease_counts, "disease_medians": plot_disease_medians}
 

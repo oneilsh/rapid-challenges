@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune plot-wearables-timing mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-patients plot-wearables-timing mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -31,6 +31,8 @@ help:
 	@echo "      ARGS='--no-intraday --window-days 180'"
 	@echo "Locally:"
 	@echo "  make test                  - unit tests (uv run pytest)"
+	@echo "  make wearables-timing-patients - same + participant-level dot plots (Workbench"
+	@echo "                               only, *_DO_NOT_EGRESS folder; PATIENT_KINDS=any,...)"
 	@echo "  make plot-wearables-timing REPORT=results/wearables-timing/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
@@ -82,6 +84,12 @@ wearables-timing: $(WORKSPACE_ENV)
 
 wearables-timing-autoimmune:
 	$(MAKE) wearables-timing ARGS="$(AUTOIMMUNE_ARGS) $(ARGS)"
+
+# Same, plus PARTICIPANT-LEVEL faceted dot plots (one point per person) in a
+# *_DO_NOT_EGRESS folder under TIMING_OUT. View them on the Workbench only.
+PATIENT_KINDS ?= any,heart_rate_minute_level,sleep_daily_summary
+wearables-timing-patients:
+	$(MAKE) wearables-timing ARGS="$(AUTOIMMUNE_ARGS) --patient-plots $(PATIENT_KINDS) $(ARGS)"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=

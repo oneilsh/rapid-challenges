@@ -307,6 +307,12 @@ def main(argv=None) -> int:
     p.add_argument("--mondo-version", default="2026-06-02")
     p.add_argument("--mondo-cache-dir", default="data/mondo")
     p.add_argument("--tag", default="")
+    p.add_argument("--patient-plots", default="",
+                   help="comma list of kinds (e.g. any,heart_rate_minute_level): also draw "
+                        "participant-level faceted dot plots into <out>/..._DO_NOT_EGRESS/ "
+                        "(Workbench only; never egress)")
+    p.add_argument("--patient-facets", type=int, default=20,
+                   help="diseases per participant-level plot (largest first, plus ALL)")
     args = p.parse_args(argv)
     cdr, billing = workspace_env()
     flags = [f.strip() for f in args.flags.split(",") if f.strip()]
@@ -364,6 +370,14 @@ WHERE table_name IN UNNEST(@tables)""",
     except ImportError as e:
         print(f"[timing] no plots ({e}); install matplotlib or run "
               "`make plot-wearables-timing REPORT=...` locally", flush=True)
+    if args.patient_plots:
+        from audits.wearables_timing_plots import write_patient_plots
+        kinds = [k.strip() for k in args.patient_plots.split(",") if k.strip()]
+        pdir = out / f"wearables_timing_{tag}_patients_DO_NOT_EGRESS"
+        for path in write_patient_plots(per, names, pdir, kinds=kinds,
+                                        max_facets=args.patient_facets, all_id=ALL,
+                                        min_window_days=args.min_window_days):
+            print(f"[timing] PARTICIPANT-LEVEL plot (do not egress) {path}", flush=True)
     print(text, flush=True)
     print(f"[timing] wrote {out}/wearables_timing_{tag}.md/.tsv/.json (cells 1-19 as "
           f"<20; quartiles only where >= {EGRESS_FLOOR} persons)", flush=True)

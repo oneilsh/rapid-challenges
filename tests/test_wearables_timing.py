@@ -141,3 +141,15 @@ def test_plots_read_only_the_masked_report(tmp_path):
     assert [p.name for p in paths] == ["pooled_bins.png", "pooled_medians.png",
                                        "disease_counts.png", "disease_medians.png"]
     assert all(p.stat().st_size > 0 for p in paths)
+
+
+def test_patient_plots_need_a_do_not_egress_folder(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("matplotlib")
+    from audits import wearables_timing_plots as wp
+    with pytest.raises(ValueError):
+        wp.write_patient_plots(_per(), {}, tmp_path / "plots")
+    assert wp.facet_order(_per(), wt.ANY, 5, wt.ALL) == [wt.ALL, "M:1"]
+    paths = wp.write_patient_plots(_per(), {"M:1": "foo"}, tmp_path / "x_DO_NOT_EGRESS",
+                                   kinds=(wt.ANY,))
+    assert [p.name for p in paths] == ["patients_days_any.png", "patients_span_any.png"]
