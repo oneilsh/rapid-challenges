@@ -31,3 +31,4 @@ commit and the Mondo release. The rest is the run's output, unedited.
 | file | scope | headline |
 |---|---|--:|
 | [2026-11-02-cardio-exact.md](wearables-events/2026-11-02-cardio-exact.md) | rare cardiovascular (MONDO:0004995), exact SNOMED; events = acute visit dates (before episode grouping) | 8,951 covered ED / inpatient events after dx in 1,182 persons (743 with ≥ 2); inflated by per-day inpatient rows |
+| [2026-11-02-autoimmune-exact.md](wearables-events/2026-11-02-autoimmune-exact.md) (plots: `2026-11-02-autoimmune-exact_events-plot-*.png`) | rare autoimmune (MONDO:0007179), exact SNOMED; acute-care episodes (7-day washout) | 2,282 covered episodes after dx in 414 persons (241 with ≥ 2); 2.33 per 1k Fitbit days |

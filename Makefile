@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events plot-wearables-timing mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -37,6 +37,7 @@ help:
 	@echo "  make wearables-events [SCOPE=cardio] - ED / inpatient visits vs Fitbit coverage"
 	@echo "                               -> RUNS_DIR/wearables-events/ (ARGS='--lookback 30 --min-cov 14')"
 	@echo "  make plot-wearables-timing REPORT=results/wearables-timing/<run>.md"
+	@echo "  make plot-wearables-events REPORT=results/wearables-events/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
 	@echo "                               names (tx.fhir.org) -> results/mondo-snomed-review/"
@@ -115,3 +116,6 @@ wearables-events: $(WORKSPACE_ENV)
 REPORT ?=
 plot-wearables-timing:
 	PYTHONPATH=$(REPO_ROOT) uv run python -m audits.wearables_timing_plots $(REPORT)
+
+plot-wearables-events:
+	PYTHONPATH=$(REPO_ROOT) uv run python -m audits.wearables_events_plots $(REPORT)

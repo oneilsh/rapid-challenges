@@ -126,3 +126,24 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     md = (out / "ai_events-report.md").read_text()
     assert "| MONDO:A | disease A | 30 |" in md
     assert (out / "ai_events-table.tsv").exists() and (out / "ai_visit-types.tsv").exists()
+
+
+def test_plots_read_only_the_masked_report(tmp_path):
+    __import__("pytest").importorskip("matplotlib")
+    from audits import wearables_events_plots as wp
+    ev = _ev()
+    s = we.summarize(ev, _expo(), _n_dx(), min_cov=14)
+    vt = pd.DataFrame({"visit_concept_id": [9203], "concept_name": ["ER"],
+                       "n_visits": [40], "n_persons": [25]})
+    cov = {c: we.coverage_bins(ev, c) for c in ("ed_or_inpatient", "related")}
+    meta = {"cdr": "p.ds", "wear_tables": ["activity_summary"], "flags": ["x"],
+            "n_rare_nodes": 1, "lookback": 30, "min_cov": 14, "washout": 7}
+    md = we.format_report(s, vt, cov, {"M:1": "foo"}, meta)
+    t = wp.read_report(md)
+    assert set(t["disease"]) == {"ed_or_inpatient", "related"} and t["min_cov"] == 14
+    assert "persons.1" in t["pooled"].columns and "coverage" in t
+    paths = wp.write_plots(md, tmp_path, prefix="run_events-plot-")
+    assert [p.name for p in paths] == ["run_events-plot-pooled.png",
+                                       "run_events-plot-coverage.png",
+                                       "run_events-plot-disease-persons.png",
+                                       "run_events-plot-disease-rates.png"]

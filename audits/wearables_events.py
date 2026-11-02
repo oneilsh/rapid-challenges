@@ -37,7 +37,7 @@ before sharing beyond the Workbench team. Person ids stay in BigQuery: rows come
 keyed by a per-run rank, and nothing person-level is written.
 
 OUTPUT: `<out-dir>/<CDR dataset>/<run>_events-report.md`, `_events-table.tsv`,
-`_visit-types.tsv`, `_events-run.json`.
+`_visit-types.tsv`, `_events-run.json`, `_events-plot-*.png` (from the masked report).
 """
 from __future__ import annotations
 
@@ -252,8 +252,8 @@ def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: di
           f"than {meta['washout'] + 1} days apart merged, dated by its first day. After / "
           "before = strictly after / before the first diagnosis (the dx day itself is "
           f"excluded). Covered = >= {mc} Fitbit days in the {lb} days before the event. "
-          "Related = the disease coded on that visit or day. Cohort = persons with the "
-          "disease and any Fitbit day. Columns are nested: check differences before "
+          "Related = the disease coded on any visit or day of the episode. Cohort = persons "
+          "with the disease and any Fitbit day. Columns are nested: check differences before "
           "sharing.", ""]
 
     a = summ[summ["mondo_id"] == ALL]
@@ -365,6 +365,13 @@ WHERE table_name IN UNNEST(@tables)""",
     mask_counts(vtypes, ["n_visits", "n_persons"]).to_csv(
         out / f"{tag}_visit-types.tsv", sep="\t", index=False)
     (out / f"{tag}_events-run.json").write_text(json.dumps(meta, indent=1, default=str))
+    try:  # plots are drawn from the masked report text only
+        from audits.wearables_events_plots import write_plots
+        for path in write_plots(text, out, prefix=f"{tag}_events-plot-"):
+            print(f"[events] plot {path}", flush=True)
+    except ImportError as e:
+        print(f"[events] no plots ({e}); install matplotlib or run "
+              "`make plot-wearables-events REPORT=...` locally", flush=True)
     print(text, flush=True)
     print(f"[events] wrote {out}/{tag}_events-report.md, _events-table.tsv, "
           f"_visit-types.tsv (cells 1-19 as <20)", flush=True)

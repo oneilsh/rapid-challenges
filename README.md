@@ -52,7 +52,8 @@ on the Workbench only; their names carry `DO_NOT_EGRESS`, which `.gitignore` blo
 
 `make wearables-events [SCOPE=cardio]` counts ED / inpatient visits after (and before) the
 first diagnosis for the same diseases, and how many have >= `--min-cov` Fitbit days in the
-`--lookback` days before them: the data behind a "predict an acute visit" task.
+`--lookback` days before them: the data behind a "predict an acute visit" task. It also writes plots from the masked report;
+`make plot-wearables-events REPORT=results/wearables-events/<run>.md` redraws them locally.
 
 wearables-timing writes one flat folder per CDR, every file named after the run:
 
