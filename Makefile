@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients plot-wearables-timing mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events plot-wearables-timing mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -34,6 +34,8 @@ help:
 	@echo "  make wearables-timing-cardio - same, rare cardiovascular disorders (MONDO:0004995)"
 	@echo "  make wearables-timing-patients [SCOPE=cardio] - + participant-level dot plots"
 	@echo "                               (Workbench only, *_DO_NOT_EGRESS; PATIENT_FACETS=12)"
+	@echo "  make wearables-events [SCOPE=cardio] - ED / inpatient visits vs Fitbit coverage"
+	@echo "                               -> RUNS_DIR/wearables-events/ (ARGS='--lookback 30 --min-cov 14')"
 	@echo "  make plot-wearables-timing REPORT=results/wearables-timing/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
@@ -100,6 +102,14 @@ PATIENT_KINDS  ?= any
 PATIENT_FACETS ?= 12
 wearables-timing-patients:
 	$(MAKE) wearables-timing ARGS="$(SCOPE_ARGS) --no-intraday --patient-plots $(PATIENT_KINDS) --patient-facets $(PATIENT_FACETS) $(ARGS)"
+
+# ED / inpatient visits after (and before) the first dx, and how many have Fitbit data in
+# the lookback window before them. SCOPE=autoimmune|cardio, as for the patient plots.
+EVENTS_OUT ?= $(RUNS_DIR)/wearables-events
+wearables-events: $(WORKSPACE_ENV)
+	mkdir -p "$(EVENTS_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_events.py \
+	    --out-dir "$(EVENTS_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
+	    $(SCOPE_ARGS) $(ARGS) 2>&1 | tee -a "$(EVENTS_OUT)/wearables_events_log.md"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=

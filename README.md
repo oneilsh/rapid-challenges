@@ -9,7 +9,7 @@ egress-safe tables.
 
 | path | what |
 |---|---|
-| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease; `wearables_timing.py`: Fitbit data by kind before / after first diagnosis) |
+| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease; `wearables_timing.py`: Fitbit data by kind before / after first diagnosis; `wearables_events.py`: ED / inpatient visits vs Fitbit coverage) |
 | `rapidaudit/egress.py` | the small-count rule: 1–19 → `<20`, 0 stays 0 |
 | `rapidaudit/aou.py` | workspace env, `query` (parameterized SQL → pandas), cached Mondo download |
 | `rapidaudit/mondo_to_omop_mapping.py` | Mondo → OMOP standard Condition (port of Monarch's mondo2omop) |
@@ -49,6 +49,10 @@ cardiovascular disorders. `make plot-wearables-timing REPORT=results/wearables-t
 redraws the plots locally from a filed report. `make wearables-timing-patients
 [SCOPE=cardio]` adds PARTICIPANT-LEVEL faceted dot plots (one point per person): view them
 on the Workbench only; their names carry `DO_NOT_EGRESS`, which `.gitignore` blocks.
+
+`make wearables-events [SCOPE=cardio]` counts ED / inpatient visits after (and before) the
+first diagnosis for the same diseases, and how many have >= `--min-cov` Fitbit days in the
+`--lookback` days before them: the data behind a "predict an acute visit" task.
 
 wearables-timing writes one flat folder per CDR, every file named after the run:
 
