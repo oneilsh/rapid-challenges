@@ -276,9 +276,14 @@ def format_report(prof: pd.DataFrame, names: dict, meta: dict, *, top: int,
             L.append(f"| {r['src']} | "
                      + " | ".join(cell(r[f"{side}_{x}"], floor) for x in labs) + " |")
 
-    d = prof[(prof["mondo_id"] != ALL) & (prof["src"] == ANY) & (prof["n_wear"] >= floor)]
-    d = d.sort_values(["n_wear", "n_dx"], ascending=False).head(int(top))
-    L += ["", f"## By disease (any kind of data; persons with data >= {floor}; top {top})",
+    d = prof[(prof["mondo_id"] != ALL) & (prof["src"] == ANY)]
+    win_cols = [f"n_{side}{t}" for t in ts for side in ("pre", "post", "both")]
+    d = d[d[win_cols].max(axis=1) >= floor]
+    d = d.sort_values(["n_wear", "n_dx"], ascending=False)
+    if top:
+        d = d.head(int(top))
+    L += ["", f"## By disease (any kind of data; every mapped disease with a window count "
+          f">= {floor}{f'; top {top}' if top else ''})",
           "", f"| Mondo | disease | n_dx | with data | ≥1 day before | ≥1 day after | "
           f"{win_head}days before | days after |",
           f"|---|---|--:|--:|--:|--:|{win_align}--:|--:|"]
@@ -336,7 +341,8 @@ def main(argv=None) -> int:
                    help="comma list: days of data in the window needed to count")
     p.add_argument("--no-intraday", action="store_true",
                    help="skip the (large) intraday tables")
-    p.add_argument("--top", type=int, default=40)
+    p.add_argument("--top", type=int, default=0,
+                   help="cap the per-disease table at this many rows (0 = no cap)")
     p.add_argument("--mondo-version", default="2026-06-02")
     p.add_argument("--mondo-cache-dir", default="data/mondo")
     p.add_argument("--tag", default="", help="run name (default: built by run_name)")

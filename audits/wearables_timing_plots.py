@@ -217,6 +217,11 @@ def plot_disease_counts(t: dict, plt):
     Masked cells sit in a shaded '<20' band as hollow markers."""
     d = t["diseases"]
     cols = window_columns(d)
+    # Only diseases with at least one colored (window) count >= 20; older reports list
+    # every disease with >= 20 persons with data.
+    shown = d[list(cols.values())].map(lambda v: parse_count(v) != MASK
+                                       and parse_count(v) > 0).any(axis=1)
+    d = d[shown].reset_index(drop=True)
     ts = sorted({tt for _, tt in cols})
     w = next((int(m.group(1)) for c in d.columns
               if (m := re.fullmatch(r"≥\d+(?: days)? in (\d+) before", c))), 365)

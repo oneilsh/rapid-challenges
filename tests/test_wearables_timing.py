@@ -178,3 +178,16 @@ def test_run_name_is_short_and_readable():
     assert wt.run_name(["MONDO:0004995"], names, ["rare"], min_dx_dates=2) == \
         "cardiovascular-disorder_rare_dx2"
     assert wt.run_name([], names, std, descendants=False) == "all-rare_nodesc"
+
+
+def test_by_disease_keeps_only_diseases_with_a_window_count_over_the_floor():
+    """M:3 has 25 persons with data but none with >= 7 days in either window: dropped
+    from the per-disease table, while M:1 (window counts >= 20) stays."""
+    extra = pd.DataFrame([("M:3", wt.ANY, 1, 1, 1, 1, 1, 1)] * 25, columns=_per().columns)
+    per = pd.concat([_per(), extra], ignore_index=True)
+    n_dx = pd.concat([_n_dx(), pd.DataFrame({"mondo_id": ["M:3"], "n_dx": [99]})])
+    prof = wt.profile(per, n_dx, thresholds=(7, 10))
+    meta = {"cdr": "p.ds", "wear_tables": ["activity_summary"], "flags": ["x"],
+            "n_rare_nodes": 3, "window_days": 365, "window_thresholds": [7, 10]}
+    md = wt.format_report(prof, {"M:1": "foo", "M:3": "bar"}, meta, top=0)
+    assert "| M:1 | foo |" in md and "| M:3 |" not in md
