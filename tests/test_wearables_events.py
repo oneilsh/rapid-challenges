@@ -53,7 +53,7 @@ def test_coverage_bins_and_report():
     vt = pd.DataFrame({"visit_concept_id": [9202, 9203], "concept_name": ["Outpatient", "ER"],
                        "n_visits": [5000, 12], "n_persons": [30, 12]})
     meta = {"cdr": "p.ds", "wear_tables": ["activity_summary"], "flags": ["x"],
-            "n_rare_nodes": 1, "lookback": 30, "min_cov": 14}
+            "n_rare_nodes": 1, "lookback": 30, "min_cov": 14, "washout": 7}
     md = we.format_report(s, vt, {"ed_or_inpatient": bins}, {"M:1": "foo"}, meta)
     assert "| ed_or_inpatient | 30 | 25 | 25 | 25 | 0 | 2.08 | 22 | 22 |" in md
     assert "| M:1 | foo | 30 |" in md and "| 9203 | ER | <20 | <20 |" in md
@@ -71,6 +71,8 @@ def test_events_sql_parses():
                  we.VISIT_TYPES_SELECT.format(cdr="p.ds"), wt.N_DX_SELECT):
         sqlglot.parse_one(ctes + body, read="bigquery")
     assert "{cdr}" not in ctes and " IN (SELECT" not in ctes
+    assert "IN (9203, 262, 8870)" in ctes and "IN (9201, 262, 8717)" in ctes
+    assert "COUNTIF(new_ep) OVER (PARTITION BY person_id ORDER BY vd)" in ctes
 
 
 def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
@@ -120,6 +122,7 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
                     "MONDO:AI", "--exact", "--tag", "ai"]) == 0
     out = out / "ds"
     assert seen["ev"]["lookback"] == ("INT64", 30)
+    assert seen["ev"]["washout"] == ("INT64", 7)
     md = (out / "ai_events-report.md").read_text()
     assert "| MONDO:A | disease A | 30 |" in md
     assert (out / "ai_events-table.tsv").exists() and (out / "ai_visit-types.tsv").exists()

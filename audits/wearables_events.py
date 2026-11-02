@@ -5,13 +5,16 @@ Diseases are chosen and mapped as in `wearables_timing` (`build_rare_map`, `--un
 `--exact`, `--min-dx-dates`; `ALL` pools them, first dx = earliest among them). The
 cohort is persons with a selected diagnosis AND at least one Fitbit daily-summary day.
 
-EVENTS = distinct (person, date) with an ED or inpatient visit start in
-visit_occurrence: visit concepts under 9203 Emergency Room Visit, 9201 Inpatient Visit
-or 262 Emergency Room and Inpatient Visit (OMOP `concept_ancestor`). Classes:
+EVENTS = acute-care EPISODES: ED or inpatient visit starts in visit_occurrence (visit
+concepts under 9203 Emergency Room Visit, 9201 Inpatient Visit or 262 Emergency Room and
+Inpatient Visit in OMOP `concept_ancestor`, plus 8870 / 8717, the CMS place-of-service ED
+and inpatient-hospital concepts), grouped per person so that a visit starting within
+--washout days (default 7) of the previous one belongs to the same episode (multi-day
+stays often have a visit row per day). An episode's date is its first day. Classes:
   ed_or_inpatient   any of them
   ed / inpatient    ED (9203 or 262) / inpatient (9201 or 262)
   related           ED or inpatient, with the disease (any selected disease for ALL)
-                    coded on that visit or that day
+                    coded on one of the episode's visits or days
 An event is AFTER the first dx when it is strictly later (the dx day itself is often the
 diagnosing visit, so it is neither before nor after), BEFORE when strictly earlier. It
 is COVERED when the person has >= --min-cov Fitbit days in the --lookback days before it
@@ -52,25 +55,34 @@ from rapidaudit.aou import bq_client, query, workspace_env
 from rapidaudit.egress import EGRESS_FLOOR, cell, mask_counts
 
 ED, INPATIENT, ED_AND_INPATIENT = 9203, 9201, 262
+# CMS place-of-service visit concepts that may sit outside the 9201 / 9203 hierarchy.
+ED_EXTRA, INPATIENT_EXTRA = (8870,), (8717,)   # Emergency Room - Hospital; Inpatient Hospital
+ED_ROOTS = (ED, ED_AND_INPATIENT, *ED_EXTRA)
+IP_ROOTS = (INPATIENT, ED_AND_INPATIENT, *INPATIENT_EXTRA)
 CLASSES = ("ed_or_inpatient", "ed", "inpatient", "related")
 COV_BINS = (0, 1, 7, 14, 21)   # lower edges of covered-days bins in the lookback
 
 
+def _ids(ids) -> str:
+    return ", ".join(str(i) for i in ids)
+
+
 def events_ctes() -> str:
-    """Appended to `timing_ctes(...)` (daily summaries only). Extra params: none.
+    """Appended to `timing_ctes(...)` (daily summaries only). Extra param: @washout
+    INT64 (days between visit starts that still belong to one episode).
     `wdays` = (person, Fitbit day); `wp` = cohort persons with Fitbit data; `pids` = a
-    per-run rank standing in for person_id; `ev` = (person, disease, first_dx, event
-    date) with ED / inpatient / related flags."""
+    per-run rank standing in for person_id; `ev` = (person, disease, first_dx, episode
+    start date) with ED / inpatient / related flags."""
     return f""",
 wdays AS (SELECT DISTINCT person_id, d FROM wear_days),
 wp AS (SELECT DISTINCT person_id FROM wdays),
 pids AS (SELECT person_id, DENSE_RANK() OVER (ORDER BY person_id) AS pid FROM wp),
 vt AS (
   SELECT descendant_concept_id AS cid,
-         LOGICAL_OR(ancestor_concept_id IN ({ED}, {ED_AND_INPATIENT})) AS is_ed,
-         LOGICAL_OR(ancestor_concept_id IN ({INPATIENT}, {ED_AND_INPATIENT})) AS is_ip
+         LOGICAL_OR(ancestor_concept_id IN ({_ids(ED_ROOTS)})) AS is_ed,
+         LOGICAL_OR(ancestor_concept_id IN ({_ids(IP_ROOTS)})) AS is_ip
   FROM `{{cdr}}.concept_ancestor`
-  WHERE ancestor_concept_id IN ({ED}, {INPATIENT}, {ED_AND_INPATIENT})
+  WHERE ancestor_concept_id IN ({_ids(ED_ROOTS + IP_ROOTS)})
   GROUP BY descendant_concept_id),
 vis AS (
   SELECT v.person_id, v.visit_occurrence_id, CAST(v.visit_start_date AS DATE) AS vd,
@@ -88,7 +100,17 @@ dxc_all AS (
   SELECT person_id, mondo_id, visit_occurrence_id, cd FROM dxc
   UNION ALL
   SELECT person_id, '{ALL}' AS mondo_id, visit_occurrence_id, cd FROM dxc),
-ev AS (
+acute AS (SELECT DISTINCT person_id, vd FROM vis),
+acute_new AS (
+  SELECT person_id, vd,
+         IFNULL(DATE_DIFF(vd, LAG(vd) OVER (PARTITION BY person_id ORDER BY vd), DAY)
+                > @washout, TRUE) AS new_ep
+  FROM acute),
+acute_ep AS (
+  SELECT person_id, vd,
+         COUNTIF(new_ep) OVER (PARTITION BY person_id ORDER BY vd) AS ep
+  FROM acute_new),
+ev_day AS (
   SELECT x.person_id, x.mondo_id, x.first_dx, v.vd,
          LOGICAL_OR(v.is_ed) AS is_ed, LOGICAL_OR(v.is_ip) AS is_ip,
          LOGICAL_OR(r.person_id IS NOT NULL) AS related
@@ -96,7 +118,14 @@ ev AS (
   JOIN vis v ON v.person_id = x.person_id
   LEFT JOIN dxc_all r ON r.person_id = v.person_id AND r.mondo_id = x.mondo_id
     AND (r.visit_occurrence_id = v.visit_occurrence_id OR r.cd = v.vd)
-  GROUP BY x.person_id, x.mondo_id, x.first_dx, v.vd)
+  GROUP BY x.person_id, x.mondo_id, x.first_dx, v.vd),
+ev AS (
+  SELECT e.person_id, e.mondo_id, e.first_dx, MIN(e.vd) AS vd,
+         LOGICAL_OR(e.is_ed) AS is_ed, LOGICAL_OR(e.is_ip) AS is_ip,
+         LOGICAL_OR(e.related) AS related
+  FROM ev_day e
+  JOIN acute_ep a ON a.person_id = e.person_id AND a.vd = e.vd
+  GROUP BY e.person_id, e.mondo_id, e.first_dx, a.ep)
 """
 
 
@@ -219,7 +248,8 @@ def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: di
              if meta.get("min_dx_dates", 1) > 1 else ""]
     if any(scope):
         L += ["Scope: " + " · ".join(x for x in scope if x), ""]
-    L += ["Event = a distinct (person, date) with an ED or inpatient visit start. After / "
+    L += [f"Event = an acute-care episode: ED / inpatient visit starts, with visits less "
+          f"than {meta['washout'] + 1} days apart merged, dated by its first day. After / "
           "before = strictly after / before the first diagnosis (the dx day itself is "
           f"excluded). Covered = >= {mc} Fitbit days in the {lb} days before the event. "
           "Related = the disease coded on that visit or day. Cohort = persons with the "
@@ -276,6 +306,9 @@ def main(argv=None) -> int:
                    help="days before an event that a model would see")
     p.add_argument("--min-cov", type=int, default=14,
                    help="Fitbit days in the lookback for an event to count as covered")
+    p.add_argument("--washout", type=int, default=7,
+                   help="visit starts within this many days of the previous one join its "
+                        "episode")
     p.add_argument("--mondo-version", default="2026-06-02")
     p.add_argument("--mondo-cache-dir", default="data/mondo")
     p.add_argument("--tag", default="", help="run name (default: built by run_name)")
@@ -304,7 +337,8 @@ WHERE table_name IN UNNEST(@tables)""",
             + events_ctes().replace("{cdr}", cdr))
     params = {"mondo": ("STRING", rmap["mondo_id"].tolist()),
               "cid": ("INT64", [int(c) for c in rmap["standard_concept_id"]]),
-              "min_dx_dates": ("INT64", int(args.min_dx_dates))}
+              "min_dx_dates": ("INT64", int(args.min_dx_dates)),
+              "washout": ("INT64", int(args.washout))}
     print("[events] diagnosis counts query…", flush=True)
     n_dx = query(client, ctes + N_DX_SELECT, params)
     print("[events] exposure query…", flush=True)
@@ -320,7 +354,7 @@ WHERE table_name IN UNNEST(@tables)""",
     meta = {"cdr": cdr, "wear_tables": found, "flags": flags, "under": roots,
             "exact": args.exact, "descendants": not args.no_descendants,
             "min_dx_dates": args.min_dx_dates, "lookback": args.lookback,
-            "min_cov": args.min_cov, "n_rare_nodes": int(rmap["mondo_id"].nunique())}
+            "min_cov": args.min_cov, "washout": args.washout, "n_rare_nodes": int(rmap["mondo_id"].nunique())}
     tag = args.tag or run_name(roots, names, flags, exact=args.exact,
                                descendants=not args.no_descendants,
                                min_dx_dates=args.min_dx_dates)
