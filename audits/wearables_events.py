@@ -13,8 +13,6 @@ and inpatient-hospital concepts), grouped per person so that a visit starting wi
 stays often have a visit row per day). An episode's date is its first day. Classes:
   ed_or_inpatient   any of them
   ed / inpatient    ED (9203 or 262) / inpatient (9201 or 262)
-  related           ED or inpatient, with the disease (any selected disease for ALL)
-                    coded on one of the episode's visits or days
 An event is AFTER the first dx when it is strictly later (the dx day itself is often the
 diagnosing visit, so it is neither before nor after), BEFORE when strictly earlier. It
 is COVERED when the person has >= --min-cov Fitbit days in the --lookback days before it
@@ -59,7 +57,7 @@ ED, INPATIENT, ED_AND_INPATIENT = 9203, 9201, 262
 ED_EXTRA, INPATIENT_EXTRA = (8870,), (8717,)   # Emergency Room - Hospital; Inpatient Hospital
 ED_ROOTS = (ED, ED_AND_INPATIENT, *ED_EXTRA)
 IP_ROOTS = (INPATIENT, ED_AND_INPATIENT, *INPATIENT_EXTRA)
-CLASSES = ("ed_or_inpatient", "ed", "inpatient", "related")
+CLASSES = ("ed_or_inpatient", "ed", "inpatient")
 COV_BINS = (0, 1, 7, 14, 21)   # lower edges of covered-days bins in the lookback
 
 
@@ -72,7 +70,7 @@ def events_ctes() -> str:
     INT64 (days between visit starts that still belong to one episode).
     `wdays` = (person, Fitbit day); `wp` = cohort persons with Fitbit data; `pids` = a
     per-run rank standing in for person_id; `ev` = (person, disease, first_dx, episode
-    start date) with ED / inpatient / related flags."""
+    start date) with ED / inpatient flags."""
     return f""",
 wdays AS (SELECT DISTINCT person_id, d FROM wear_days),
 wp AS (SELECT DISTINCT person_id FROM wdays),
@@ -90,16 +88,6 @@ vis AS (
   FROM `{{cdr}}.visit_occurrence` v
   JOIN vt ON v.visit_concept_id = vt.cid
   JOIN wp ON v.person_id = wp.person_id),
-dxc AS (
-  SELECT co.person_id, nc.mondo_id, co.visit_occurrence_id,
-         CAST(co.condition_start_date AS DATE) AS cd
-  FROM `{{cdr}}.condition_occurrence` co
-  JOIN node_concepts nc ON co.condition_concept_id = nc.cid
-  JOIN wp ON co.person_id = wp.person_id),
-dxc_all AS (
-  SELECT person_id, mondo_id, visit_occurrence_id, cd FROM dxc
-  UNION ALL
-  SELECT person_id, '{ALL}' AS mondo_id, visit_occurrence_id, cd FROM dxc),
 acute AS (SELECT DISTINCT person_id, vd FROM vis),
 acute_new AS (
   SELECT person_id, vd,
@@ -112,17 +100,13 @@ acute_ep AS (
   FROM acute_new),
 ev_day AS (
   SELECT x.person_id, x.mondo_id, x.first_dx, v.vd,
-         LOGICAL_OR(v.is_ed) AS is_ed, LOGICAL_OR(v.is_ip) AS is_ip,
-         LOGICAL_OR(r.person_id IS NOT NULL) AS related
+         LOGICAL_OR(v.is_ed) AS is_ed, LOGICAL_OR(v.is_ip) AS is_ip
   FROM dx_all x
   JOIN vis v ON v.person_id = x.person_id
-  LEFT JOIN dxc_all r ON r.person_id = v.person_id AND r.mondo_id = x.mondo_id
-    AND (r.visit_occurrence_id = v.visit_occurrence_id OR r.cd = v.vd)
   GROUP BY x.person_id, x.mondo_id, x.first_dx, v.vd),
 ev AS (
   SELECT e.person_id, e.mondo_id, e.first_dx, MIN(e.vd) AS vd,
-         LOGICAL_OR(e.is_ed) AS is_ed, LOGICAL_OR(e.is_ip) AS is_ip,
-         LOGICAL_OR(e.related) AS related
+         LOGICAL_OR(e.is_ed) AS is_ed, LOGICAL_OR(e.is_ip) AS is_ip
   FROM ev_day e
   JOIN acute_ep a ON a.person_id = e.person_id AND a.vd = e.vd
   GROUP BY e.person_id, e.mondo_id, e.first_dx, a.ep)
@@ -132,12 +116,12 @@ ev AS (
 # One row per (person, disease, event date). Extra param: @lookback INT64.
 EVENTS_SELECT = """
 SELECT p.pid, e.mondo_id, DATE_DIFF(e.vd, e.first_dx, DAY) AS rel_day,
-       e.is_ed, e.is_ip, e.related, COUNT(w.d) AS cov_days
+       e.is_ed, e.is_ip, COUNT(w.d) AS cov_days
 FROM ev e
 JOIN pids p ON p.person_id = e.person_id
 LEFT JOIN wdays w ON w.person_id = e.person_id
   AND w.d >= DATE_SUB(e.vd, INTERVAL @lookback DAY) AND w.d < e.vd
-GROUP BY p.pid, e.mondo_id, e.vd, e.first_dx, e.is_ed, e.is_ip, e.related
+GROUP BY p.pid, e.mondo_id, e.vd, e.first_dx, e.is_ed, e.is_ip
 """
 
 # One row per (person, disease): Fitbit days before / after the first dx.
@@ -166,8 +150,7 @@ def event_class_mask(ev: pd.DataFrame, cls: str) -> pd.Series:
         return ev["is_ed"].astype(bool)
     if cls == "inpatient":
         return ev["is_ip"].astype(bool)
-    acute = ev["is_ed"].astype(bool) | ev["is_ip"].astype(bool)
-    return acute & ev["related"].astype(bool) if cls == "related" else acute
+    return ev["is_ed"].astype(bool) | ev["is_ip"].astype(bool)
 
 
 def summarize(ev: pd.DataFrame, expo: pd.DataFrame, n_dx: pd.DataFrame, *,
@@ -252,8 +235,7 @@ def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: di
           f"than {meta['washout'] + 1} days apart merged, dated by its first day. After / "
           "before = strictly after / before the first diagnosis (the dx day itself is "
           f"excluded). Covered = >= {mc} Fitbit days in the {lb} days before the event. "
-          "Related = the disease coded on any visit or day of the episode. Cohort = persons "
-          "with the disease and any Fitbit day. Columns are nested: check differences before "
+          "Cohort = persons with the disease and any Fitbit day. Columns are nested: check differences before "
           "sharing.", ""]
 
     a = summ[summ["mondo_id"] == ALL]
@@ -276,7 +258,7 @@ def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: di
     d = summ[(summ["mondo_id"] != ALL) & (summ["n_wear"] >= floor)]
     show = d[d["event_class"] == "ed_or_inpatient"].sort_values("n_wear", ascending=False)
     L += ["", f"## By disease (persons with Fitbit data >= {floor})", ""]
-    for cls in ("ed_or_inpatient", "related"):
+    for cls in ("ed_or_inpatient",):
         L += [f"### {cls}", "", f"| Mondo | disease | with data | {EVENT_HEAD}",
               "|---|---|--:|" + "--:|" * 8]
         for m in show["mondo_id"]:
@@ -350,7 +332,7 @@ WHERE table_name IN UNNEST(@tables)""",
     vtypes = query(client, ctes + VISIT_TYPES_SELECT.format(cdr=cdr), params)
 
     summ = summarize(ev, expo, n_dx, min_cov=args.min_cov)
-    cov = {cls: coverage_bins(ev, cls) for cls in ("ed_or_inpatient", "related")}
+    cov = {"ed_or_inpatient": coverage_bins(ev, "ed_or_inpatient")}
     meta = {"cdr": cdr, "wear_tables": found, "flags": flags, "under": roots,
             "exact": args.exact, "descendants": not args.no_descendants,
             "min_dx_dates": args.min_dx_dates, "lookback": args.lookback,

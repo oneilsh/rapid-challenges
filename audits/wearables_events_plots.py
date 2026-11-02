@@ -22,9 +22,9 @@ from audits.wearables_timing_plots import (AFTER, BEFORE, GRID, INK, INK2, MASK,
                                            THIRD, _fig, _style, _top_legend, md_tables,
                                            parse_count)
 
-CLASSES = ("ed_or_inpatient", "related")
+CLASSES = ("ed_or_inpatient",)
 CLASS_LABEL = {"ed_or_inpatient": "any ED / inpatient episode", "ed": "ED",
-               "inpatient": "inpatient", "related": "disease-related episode"}
+               "inpatient": "inpatient"}
 # Person-count series on the per-disease plot: (column, label, color).
 PERSON_SERIES = (("persons", "with an episode after dx", THIRD),
                  ("persons.1", "with a covered episode", BEFORE),
@@ -81,6 +81,7 @@ def _log_axis(ax, plt, n_rows):
 def plot_pooled(t: dict, plt):
     """All selected diseases, by episode class: episodes (left) and persons (right)."""
     p = t["pooled"]
+    p = p[p["event class"].isin(CLASS_LABEL)].reset_index(drop=True)   # older reports
     classes = list(p["event class"])
     fig = _fig(plt, 12, 0.6 * len(classes) + 2.0)
     axes = fig.subplots(1, 2, sharey=True)
@@ -113,8 +114,9 @@ def plot_coverage(t: dict, plt):
     """Episodes after dx by Fitbit days in the lookback, one panel per class; bins at or
     above the report's coverage threshold (covered episodes) in blue."""
     c = t["coverage"]
+    c = c[c["event class"].isin(CLASSES)].reset_index(drop=True)   # older reports
     bins = list(c.columns[1:])
-    fig = _fig(plt, 10, 4.0)
+    fig = _fig(plt, 5.5 * len(c), 4.0)
     axes = fig.subplots(1, len(c), squeeze=False).ravel()
     for ax, (_, r) in zip(axes, c.iterrows()):
         _style(ax)
@@ -153,12 +155,12 @@ def _shown_diseases(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_disease_persons(t: dict, plt):
-    """Per disease, one panel per class: persons with data (gray tick), with an episode
+    """Per disease, one panel per class in CLASSES: persons with data (gray tick), with an episode
     after dx, with a covered one, with >= 2 covered (log scale)."""
     base = _shown_diseases(t["disease"]["ed_or_inpatient"])
     names = list(base["disease"])
-    fig = _fig(plt, 13, max(4.5, 0.5 * len(names) + 2.2))
-    axes = fig.subplots(1, len(CLASSES), sharey=True)
+    fig = _fig(plt, 7.5 * len(CLASSES), max(4.5, 0.5 * len(names) + 2.2))
+    axes = fig.subplots(1, len(CLASSES), sharey=True, squeeze=False).ravel()
     for ax, cls in zip(axes, CLASSES):
         d = t["disease"][cls].set_index("disease")
         _style(ax)

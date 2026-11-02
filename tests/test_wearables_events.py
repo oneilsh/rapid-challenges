@@ -8,19 +8,19 @@ from audits import wearables_timing as wt
 
 def _ev():
     """Disease M:1 (ALL mirrors it): 25 persons each with one ED visit 10 days after dx,
-    fully covered (30 Fitbit days in the lookback); persons 0-4 have a second, related
-    inpatient visit at day 40 with 3 covered days; persons 0-21 an ED visit before dx."""
+    fully covered (30 Fitbit days in the lookback); persons 0-4 have a second, inpatient
+    visit at day 40 with 3 covered days; persons 0-21 an ED visit before dx."""
     rows = []
     for m in ("M:1", wt.ALL):
         for pid in range(25):
-            rows.append((pid, m, 10, True, False, False, 30))
+            rows.append((pid, m, 10, True, False, 30))
             if pid < 5:
-                rows.append((pid, m, 40, False, True, True, 3))
+                rows.append((pid, m, 40, False, True, 3))
             if pid < 22:
-                rows.append((pid, m, -100, True, False, False, 20))
-            rows.append((pid, m, 0, True, True, True, 30))           # dx day: excluded
+                rows.append((pid, m, -100, True, False, 20))
+            rows.append((pid, m, 0, True, True, 30))           # dx day: excluded
     return pd.DataFrame(rows, columns=["pid", "mondo_id", "rel_day", "is_ed", "is_ip",
-                                       "related", "cov_days"])
+                                       "cov_days"])
 
 
 def _expo():
@@ -39,9 +39,9 @@ def test_summarize_counts_covered_and_repeat_events():
     assert (a["n_ev"], a["n_ev_p"], a["n_cov"], a["n_cov_p"], a["n_cov_p2"]) == (30, 25, 25, 25, 0)
     assert a["cov_per_1k"] == round(1000 * 25 / 12_000, 2)
     assert (a["n_cov_pre"], a["n_cov_pre_p"]) == (22, 22)
-    r = s.loc[("M:1", "related")]
+    r = s.loc[("M:1", "inpatient")]
     assert (r["n_ev"], r["n_cov"]) == (5, 0) and pd.isna(r["cov_per_1k"])
-    assert s.loc[("M:1", "inpatient"), "n_ev"] == 5
+    assert set(s.index.get_level_values(1)) == {"ed_or_inpatient", "ed", "inpatient"}
     assert list(s.index.get_level_values(0))[0] == wt.ALL
 
 
@@ -59,8 +59,8 @@ def test_coverage_bins_and_report():
     assert "| M:1 | foo | 30 |" in md and "| 9203 | ER | <20 | <20 |" in md
     assert "| ed_or_inpatient | 0 | <20 | 0 | 0 | 25 |" in md
     t = we.masked_table(s, {"M:1": "foo"}).set_index(["mondo_id", "event_class"])
-    assert t.loc[("M:1", "related"), "n_ev"] == "<20"
-    assert t.loc[("M:1", "related"), "cov_per_1k"] == ""
+    assert t.loc[("M:1", "inpatient"), "n_ev"] == "<20"
+    assert t.loc[("M:1", "inpatient"), "cov_per_1k"] == ""
 
 
 def test_events_sql_parses():
@@ -135,12 +135,13 @@ def test_plots_read_only_the_masked_report(tmp_path):
     s = we.summarize(ev, _expo(), _n_dx(), min_cov=14)
     vt = pd.DataFrame({"visit_concept_id": [9203], "concept_name": ["ER"],
                        "n_visits": [40], "n_persons": [25]})
-    cov = {c: we.coverage_bins(ev, c) for c in ("ed_or_inpatient", "related")}
+    cov = {"ed_or_inpatient": we.coverage_bins(ev, "ed_or_inpatient")}
     meta = {"cdr": "p.ds", "wear_tables": ["activity_summary"], "flags": ["x"],
             "n_rare_nodes": 1, "lookback": 30, "min_cov": 14, "washout": 7}
     md = we.format_report(s, vt, cov, {"M:1": "foo"}, meta)
     t = wp.read_report(md)
-    assert set(t["disease"]) == {"ed_or_inpatient", "related"} and t["min_cov"] == 14
+    assert set(t["disease"]) == {"ed_or_inpatient"} and t["min_cov"] == 14
+    assert "related" not in md and "### related" not in md
     assert "persons.1" in t["pooled"].columns and "coverage" in t
     paths = wp.write_plots(md, tmp_path, prefix="run_events-plot-")
     assert [p.name for p in paths] == ["run_events-plot-pooled.png",
