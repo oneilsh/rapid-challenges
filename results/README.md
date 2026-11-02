@@ -24,4 +24,4 @@ commit and the Mondo release. The rest is the run's output, unedited.
 
 | file | scope | headline |
 |---|---|--:|
-| [2026-11-02-autoimmune-exact.md](wearables-timing/2026-11-02-autoimmune-exact.md) ([plots](wearables-timing/2026-11-02-autoimmune-exact/)) | rare autoimmune (MONDO:0007179), exact SNOMED mapping; Fitbit days by kind before / after first dx | 306 with ≥ 30 days in the year before and after (482 with any pre-dx day) |
+| [2026-11-02-autoimmune-exact.md](wearables-timing/2026-11-02-autoimmune-exact.md) (plots: `2026-11-02-autoimmune-exact_plot-*.png`) | rare autoimmune (MONDO:0007179), exact SNOMED mapping; Fitbit days by kind before / after first dx | 306 with ≥ 30 days in the year before and after (482 with any pre-dx day) |

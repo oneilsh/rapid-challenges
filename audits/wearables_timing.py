@@ -19,9 +19,10 @@ later count as AFTER.
 Per (disease, kind), over persons with the disease and at least one day of that kind:
   n_wear                persons with any day of this kind
   n_before / n_after    ... with >= 1 day before / on-or-after the first diagnosis
-  n_pre_win / n_post_win / n_both_win
-                        ... with >= --min-window-days days in the --window-days before
-                        the diagnosis / from it on / both (the before-vs-after contrast)
+  n_pre<t> / n_post<t> / n_both<t>
+                        ... with >= t days (each t in --window-thresholds, default 7
+                        and 30) in the --window-days before the diagnosis / from it on /
+                        both (the before-vs-after contrast)
   before_p25/p50/p75    quartiles of days before, among n_before (blank if n_before < 20)
   after_p25/p50/p75     quartiles of days after, among n_after
   lead_p25/p50/p75      days from the first wear day to the diagnosis, among n_before
@@ -31,17 +32,24 @@ Per (disease, kind), over persons with the disease and at least one day of that 
 
 EGRESS: every count goes through `cell` (1..19 -> "<20"); quartiles are published only
 when the persons behind them number >= 20, with no min/max. The columns are NESTED
-(n_wear >= n_before >= n_pre_win, `any` >= each kind, ALL >= each disease), so a
+(n_wear >= n_before >= n_pre7 >= n_pre30, `any` >= each kind, ALL >= each disease), so a
 difference of two published cells can be a small count: check before sharing a table
 beyond the Workbench team.
 
 BigQuery returns one aggregated row per (person, disease, kind) without person ids; the
-distributions are computed in pandas and nothing person-level is written.
+distributions are computed in pandas. Nothing person-level is written, except the
+optional `--patient-plots` PNGs, whose names carry DO_NOT_EGRESS.
+
+OUTPUT: one flat folder per CDR (`<out-dir>/<CDR dataset>/`); every file starts with the
+run name (`run_name`, e.g. `autoimmune-disease_exact`) and says what it is:
+`_report.md`, `_table.tsv`, `_mapping.tsv`, `_run.json`, `_plot-*.png`, and
+`_DO_NOT_EGRESS_patients-*.png`.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -63,6 +71,10 @@ ANY = "any"
 # Bin lower edges for persons' day counts (persons with 0 days are not binned).
 DAY_BINS = (1, 30, 90, 365, 730)
 QUARTILES = (("p25", 0.25), ("p50", 0.5), ("p75", 0.75))
+WINDOW_THRESHOLDS = (7, 30)
+# The default rare-source set (Orphanet / GARD / NORD / Mondo, not inferred): left out of
+# run names; any other --flags set is spelled out.
+STANDARD_FLAGS = {"orphanet_rare", "gard_rare", "nord_rare", "mondo_rare"}
 
 
 def bin_labels(edges=DAY_BINS) -> list[str]:
@@ -163,7 +175,7 @@ def _bins(s: pd.Series, prefix: str, edges=DAY_BINS) -> dict:
             for lab, lo, h in zip(bin_labels(edges), edges, hi)}
 
 
-def profile(per: pd.DataFrame, n_dx: pd.DataFrame, *, min_window_days: int,
+def profile(per: pd.DataFrame, n_dx: pd.DataFrame, *, thresholds=WINDOW_THRESHOLDS,
             floor: int = EGRESS_FLOOR) -> pd.DataFrame:
     """Raw (unmasked) per-(disease, kind) summary of the PER_PERSON_SELECT rows. Every
     disease in `n_dx` gets a row per kind seen anywhere in `per` (0 where nobody has it).
@@ -174,12 +186,14 @@ def profile(per: pd.DataFrame, n_dx: pd.DataFrame, *, min_window_days: int,
         for k in kinds:
             g = per[(per["mondo_id"] == m) & (per["src"] == k)]
             b, a = g[g["days_before"] > 0], g[g["days_after"] > 0]
-            pre = g["days_pre_win"] >= min_window_days
-            post = g["days_post_win"] >= min_window_days
+            win = {}
+            for t in thresholds:
+                pre, post = g["days_pre_win"] >= t, g["days_post_win"] >= t
+                win |= {f"n_pre{t}": int(pre.sum()), f"n_post{t}": int(post.sum()),
+                        f"n_both{t}": int((pre & post).sum())}
             rows.append({
                 "mondo_id": m, "src": k, "n_dx": int(nd), "n_wear": len(g),
-                "n_before": len(b), "n_after": len(a), "n_pre_win": int(pre.sum()),
-                "n_post_win": int(post.sum()), "n_both_win": int((pre & post).sum()),
+                "n_before": len(b), "n_after": len(a), **win,
                 **_quartiles(b["days_before"], "before", floor),
                 **_quartiles(a["days_after"], "after", floor),
                 **_quartiles(b["lead_days"], "lead", floor),
@@ -215,7 +229,13 @@ def format_report(prof: pd.DataFrame, names: dict, meta: dict, *, top: int,
                   floor: int = EGRESS_FLOOR) -> str:
     """Markdown: the pooled ALL rows by kind (counts, quartiles, bins), then per disease
     (n_wear in `any` >= floor) the `any` summary and a kinds table."""
-    w, mw = meta["window_days"], meta["min_window_days"]
+    w, ts = meta["window_days"], meta["window_thresholds"]
+    win_head = "".join(f"≥{t} in {w} before | ≥{t} in {w} after | both ≥{t} | " for t in ts)
+    win_align = "--:|" * (3 * len(ts))
+
+    def win_cells(r):
+        return "".join(f"{cell(r[f'n_pre{t}'], floor)} | {cell(r[f'n_post{t}'], floor)} | "
+                       f"{cell(r[f'n_both{t}'], floor)} | " for t in ts)
     L = ["# Wearables data before and after first diagnosis (All of Us)", "",
          f"CDR: `{meta['cdr']}`", "",
          f"Fitbit tables: {', '.join(meta['wear_tables'])} · rare = Mondo subsets "
@@ -232,21 +252,20 @@ def format_report(prof: pd.DataFrame, names: dict, meta: dict, *, top: int,
           "first diagnosis; after = that day or later. Medians are shown as "
           "median (p25–p75), and only where >= 20 persons are behind them. Columns are "
           "nested, so differences between cells can be small counts: check before "
-          "sharing.", ""]
+          f"sharing. '≥t in {w} before' = at least t days of data in the {w} days before "
+          "the first diagnosis (after: from it on); 'both' = both.", ""]
 
     a = prof[prof["mondo_id"] == ALL]
     nd = int(a["n_dx"].iloc[0]) if len(a) else 0
     L += ["## All selected diseases, by kind of data", "",
           f"Persons with any selected diagnosis: {cell(nd, floor)} (first diagnosis = "
           "earliest among the selected diseases).", "",
-          f"| kind | persons | ≥1 day before | ≥1 day after | ≥{mw} days in {w} before | "
-          f"≥{mw} days in {w} after | both | days before | days after | "
-          "first wear → dx (days) | dx → last wear (days) |",
-          "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|"]
+          f"| kind | persons | ≥1 day before | ≥1 day after | {win_head}days before | "
+          "days after | first wear → dx (days) | dx → last wear (days) |",
+          f"|---|--:|--:|--:|{win_align}--:|--:|--:|--:|"]
     for _, r in a.iterrows():
         L.append(f"| {r['src']} | {cell(r['n_wear'], floor)} | {cell(r['n_before'], floor)} | "
-                 f"{cell(r['n_after'], floor)} | {cell(r['n_pre_win'], floor)} | "
-                 f"{cell(r['n_post_win'], floor)} | {cell(r['n_both_win'], floor)} | "
+                 f"{cell(r['n_after'], floor)} | {win_cells(r)}"
                  f"{_iqr(r, 'before')} | {_iqr(r, 'after')} | {_iqr(r, 'lead')} | "
                  f"{_iqr(r, 'follow')} |")
     labs = bin_labels()
@@ -261,15 +280,13 @@ def format_report(prof: pd.DataFrame, names: dict, meta: dict, *, top: int,
     d = d.sort_values(["n_wear", "n_dx"], ascending=False).head(int(top))
     L += ["", f"## By disease (any kind of data; persons with data >= {floor}; top {top})",
           "", f"| Mondo | disease | n_dx | with data | ≥1 day before | ≥1 day after | "
-          f"≥{mw} in {w} before | ≥{mw} in {w} after | both | days before | days after |",
-          "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|"]
+          f"{win_head}days before | days after |",
+          f"|---|---|--:|--:|--:|--:|{win_align}--:|--:|"]
     for _, r in d.iterrows():
         L.append(f"| {r['mondo_id']} | {str(names.get(r['mondo_id'], r['mondo_id']))[:44]} | "
                  f"{cell(r['n_dx'], floor)} | {cell(r['n_wear'], floor)} | "
                  f"{cell(r['n_before'], floor)} | {cell(r['n_after'], floor)} | "
-                 f"{cell(r['n_pre_win'], floor)} | {cell(r['n_post_win'], floor)} | "
-                 f"{cell(r['n_both_win'], floor)} | {_iqr(r, 'before')} | "
-                 f"{_iqr(r, 'after')} |")
+                 f"{win_cells(r)}{_iqr(r, 'before')} | {_iqr(r, 'after')} |")
 
     kinds = [k for k in prof["src"].unique() if k != ANY]
     L += ["", "## By disease and kind: persons with ≥1 day before / after the first "
@@ -282,6 +299,22 @@ def format_report(prof: pd.DataFrame, names: dict, meta: dict, *, top: int,
             f"{cell(g.loc[k, 'n_before'], floor)} / {cell(g.loc[k, 'n_after'], floor)}"
             for k in kinds) + " |")
     return "\n".join(L) + "\n"
+
+
+def _slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
+
+
+def run_name(roots, names: dict, flags, *, exact=False, descendants=True,
+             min_dx_dates=1) -> str:
+    """Short readable run name: the Mondo root labels (or 'all-rare'), then only the
+    options that differ from the usual ones, e.g. 'autoimmune-disease_exact'."""
+    parts = ["+".join(_slug(names.get(r, r)) for r in roots) or "all-rare"]
+    if set(flags) != STANDARD_FLAGS:
+        parts.append("-".join(f.replace("_rare", "") or "rare" for f in flags))
+    parts += (["exact"] if exact else []) + ([] if descendants else ["nodesc"])
+    parts += [f"dx{min_dx_dates}"] if min_dx_dates > 1 else []
+    return "_".join(parts)
 
 
 def main(argv=None) -> int:
@@ -298,19 +331,19 @@ def main(argv=None) -> int:
                    help="count the mapped standard concept only, not its OMOP subtree")
     p.add_argument("--min-dx-dates", type=int, default=1)
     p.add_argument("--window-days", type=int, default=365,
-                   help="window before / after the first diagnosis for n_*_win")
-    p.add_argument("--min-window-days", type=int, default=30,
-                   help="days of data in the window needed to count in n_*_win")
+                   help="window before / after the first diagnosis for n_pre/post/both")
+    p.add_argument("--window-thresholds", default="7,30",
+                   help="comma list: days of data in the window needed to count")
     p.add_argument("--no-intraday", action="store_true",
                    help="skip the (large) intraday tables")
     p.add_argument("--top", type=int, default=40)
     p.add_argument("--mondo-version", default="2026-06-02")
     p.add_argument("--mondo-cache-dir", default="data/mondo")
-    p.add_argument("--tag", default="")
+    p.add_argument("--tag", default="", help="run name (default: built by run_name)")
     p.add_argument("--patient-plots", default="",
                    help="comma list of kinds (e.g. any,heart_rate_minute_level): also draw "
-                        "participant-level faceted dot plots into <out>/..._DO_NOT_EGRESS/ "
-                        "(Workbench only; never egress)")
+                        "participant-level faceted dot plots (<run>_DO_NOT_EGRESS_*.png; "
+                        "Workbench only, never egress)")
     p.add_argument("--patient-facets", type=int, default=20,
                    help="diseases per participant-level plot (largest first, plus ALL)")
     args = p.parse_args(argv)
@@ -345,27 +378,26 @@ WHERE table_name IN UNNEST(@tables)""",
     print("[timing] per-person timing query…", flush=True)
     per = query(client, ctes + PER_PERSON_SELECT,
                 {**params, "win_days": ("INT64", int(args.window_days))})
-    prof = profile(per, n_dx, min_window_days=args.min_window_days)
+    ts = tuple(int(t) for t in args.window_thresholds.split(",") if t.strip())
+    prof = profile(per, n_dx, thresholds=ts)
 
     meta = {"cdr": cdr, "wear_tables": found, "flags": flags, "under": roots,
             "exact": args.exact, "descendants": not args.no_descendants,
             "min_dx_dates": args.min_dx_dates, "window_days": args.window_days,
-            "min_window_days": args.min_window_days,
+            "window_thresholds": list(ts),
             "n_rare_nodes": int(rmap["mondo_id"].nunique())}
     text = format_report(prof, names, meta, top=args.top)
-    tag = args.tag or ("_".join(flags)
-                       + "".join(f"_under-{r.replace(':', '')}" for r in roots)
-                       + ("_exact" if args.exact else "")
-                       + ("_nodesc" if args.no_descendants else "")
-                       + (f"_dx{args.min_dx_dates}" if args.min_dx_dates > 1 else ""))
-    (out / f"wearables_timing_{tag}.md").write_text(text)
-    masked(prof, names).to_csv(out / f"wearables_timing_{tag}.tsv", sep="\t", index=False)
-    rm.review.to_csv(out / f"wearables_timing_{tag}_mapping.tsv", sep="\t", index=False)
-    (out / f"wearables_timing_{tag}.json").write_text(json.dumps(meta, indent=1,
-                                                                 default=str))
+    tag = args.tag or run_name(roots, names, flags, exact=args.exact,
+                               descendants=not args.no_descendants,
+                               min_dx_dates=args.min_dx_dates)
+    meta["run"] = tag
+    (out / f"{tag}_report.md").write_text(text)
+    masked(prof, names).to_csv(out / f"{tag}_table.tsv", sep="\t", index=False)
+    rm.review.to_csv(out / f"{tag}_mapping.tsv", sep="\t", index=False)
+    (out / f"{tag}_run.json").write_text(json.dumps(meta, indent=1, default=str))
     try:  # plots are drawn from the masked report text only
         from audits.wearables_timing_plots import write_plots
-        for path in write_plots(text, out / f"wearables_timing_{tag}_plots"):
+        for path in write_plots(text, out, prefix=f"{tag}_plot-"):
             print(f"[timing] plot {path}", flush=True)
     except ImportError as e:
         print(f"[timing] no plots ({e}); install matplotlib or run "
@@ -373,13 +405,12 @@ WHERE table_name IN UNNEST(@tables)""",
     if args.patient_plots:
         from audits.wearables_timing_plots import write_patient_plots
         kinds = [k.strip() for k in args.patient_plots.split(",") if k.strip()]
-        pdir = out / f"wearables_timing_{tag}_patients_DO_NOT_EGRESS"
-        for path in write_patient_plots(per, names, pdir, kinds=kinds,
-                                        max_facets=args.patient_facets, all_id=ALL,
-                                        min_window_days=args.min_window_days):
+        for path in write_patient_plots(per, names, out, prefix=f"{tag}_DO_NOT_EGRESS_",
+                                        kinds=kinds, max_facets=args.patient_facets,
+                                        all_id=ALL, thresholds=ts):
             print(f"[timing] PARTICIPANT-LEVEL plot (do not egress) {path}", flush=True)
     print(text, flush=True)
-    print(f"[timing] wrote {out}/wearables_timing_{tag}.md/.tsv/.json (cells 1-19 as "
+    print(f"[timing] wrote {out}/{tag}_report.md, _table.tsv, _run.json (cells 1-19 as "
           f"<20; quartiles only where >= {EGRESS_FLOOR} persons)", flush=True)
     return 0
 

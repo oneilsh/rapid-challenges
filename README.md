@@ -40,14 +40,27 @@ run also writes `*_mapping.tsv`: each candidate disease, its code and whether it
 used. It has no participant counts.
 
 `wearables-timing` takes the same disease options (`--flags`, `--under`, `--exact`, …) plus
-`--window-days` / `--min-window-days` (default: >= 30 days of data in the 365 days before
-and after the diagnosis), and `--no-intraday` to skip the large minute-level tables. Per
-disease and kind of data it reports how many persons have data before / after the first
-diagnosis, quartiles of days, and binned counts. It also writes PNG plots (drawn from the
-masked report only); `make plot-wearables-timing REPORT=results/wearables-timing/<run>.md`
-redraws them locally from a filed report. `make wearables-timing-patients [SCOPE=cardio]` adds
-PARTICIPANT-LEVEL faceted dot plots (one point per person) in a `*_DO_NOT_EGRESS` folder:
-view them on the Workbench only; `.gitignore` blocks that name.
+`--window-days` / `--window-thresholds` (default: persons with >= 7 and >= 30 days of data
+in the 365 days before and after the diagnosis), and `--no-intraday` to skip the large
+minute-level tables. Per disease and kind of data it reports how many persons have data
+before / after the first diagnosis, quartiles of days, and binned counts, plus PNG plots
+drawn from the masked report only. `make wearables-timing-cardio` runs it on rare
+cardiovascular disorders. `make plot-wearables-timing REPORT=results/wearables-timing/<run>.md`
+redraws the plots locally from a filed report. `make wearables-timing-patients
+[SCOPE=cardio]` adds PARTICIPANT-LEVEL faceted dot plots (one point per person): view them
+on the Workbench only; their names carry `DO_NOT_EGRESS`, which `.gitignore` blocks.
+
+wearables-timing writes one flat folder per CDR, every file named after the run:
+
+```
+wearables-timing/R2024Q3R8/
+  autoimmune-disease_exact_report.md        masked report (file this one)
+  autoimmune-disease_exact_table.tsv        every disease x kind, masked
+  autoimmune-disease_exact_mapping.tsv      disease -> SNOMED concept used
+  autoimmune-disease_exact_run.json         options
+  autoimmune-disease_exact_plot-*.png       plots of the masked report
+  autoimmune-disease_exact_DO_NOT_EGRESS_patients-*.png   participant-level
+```
 
 Outputs go to `$(RUNS_DIR)/<audit>/<CDR dataset>/` (e.g. `…/wearables-rare/R2024Q3R8/`),
 outside the repo, so runs on different CDR releases don't overwrite each other. The default `RUNS_DIR` is the

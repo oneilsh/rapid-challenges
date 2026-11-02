@@ -1,12 +1,13 @@
 """Plots for a wearables-timing report.
 
-Reads the masked markdown report (`wearables_timing_<tag>.md`, or a filed copy under
-results/), never the CDR, so the plots carry only what the report already publishes:
-"<20" cells are drawn as hollow / hatched marks labeled "<20", never as a value.
+Reads the masked markdown report (`<run>_report.md`, or a filed copy under results/),
+never the CDR, so the plots carry only what the report already publishes: "<20" cells
+are drawn as hollow / hatched marks labeled "<20", never as a value.
 
-    python -m audits.wearables_timing_plots REPORT.md --out-dir DIR
+    python -m audits.wearables_timing_plots REPORT.md [--out-dir DIR]
 
-writes DIR/{pooled_bins,pooled_medians,disease_counts,disease_medians}.png.
+writes <run>_plot-{pooled-bins,pooled-medians,disease-counts,disease-medians}.png next
+to the report (or in DIR).
 """
 from __future__ import annotations
 
@@ -180,42 +181,105 @@ def plot_pooled_medians(t: dict, plt):
     return fig
 
 
+def _tint(hex_color: str, amount: float = 0.5) -> str:
+    """`hex_color` mixed toward white by `amount`."""
+    rgb = [int(hex_color[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(c + (255 - c) * amount):02x}" for c in rgb)
+
+
+def window_columns(df: pd.DataFrame) -> dict:
+    """{(side, t): column} for the window-count columns of a report table, side in
+    before / after / both. Reads '≥7 in 365 before' / 'both ≥7', and the older
+    single-threshold 'both' header."""
+    out = {}
+    for c in df.columns:
+        m = re.fullmatch(r"≥(\d+)(?: days)? in \d+ (before|after)", c)
+        if m:
+            out[(m.group(2), int(m.group(1)))] = c
+        m = re.fullmatch(r"both ≥(\d+)", c)
+        if m:
+            out[("both", int(m.group(1)))] = c
+    if "both" in df.columns:
+        ts = {t for side, t in out if side == "before"}
+        if len(ts) == 1:
+            out[("both", ts.pop())] = "both"
+    return out
+
+
+SIDES = (("before", BEFORE, "before"), ("after", AFTER, "after"),
+         ("both", THIRD, "before AND after"))
+
+
 def plot_disease_counts(t: dict, plt):
-    """Per disease (log scale): persons with any data, with >= 1 day before the first dx,
-    and with enough data in the window on both sides. Masked cells sit in a shaded
-    '<20' band as hollow markers."""
+    """Per disease (log scale): persons with any data (gray tick), then for before /
+    after / both (color) persons with >= t days of data in the window around the first
+    dx: light diamond = smallest t, solid circle = largest, joined like a dumbbell.
+    Masked cells sit in a shaded '<20' band as hollow markers."""
     d = t["diseases"]
-    both = next(c for c in d.columns if c == "both")
-    series = [("with any Fitbit data", BEFORE, "with data"),
-              ("≥1 day before first dx", AFTER, "≥1 day before"),
-              ("≥30 days in the year before AND after", THIRD, both)]
+    cols = window_columns(d)
+    ts = sorted({tt for _, tt in cols})
+    w = next((int(m.group(1)) for c in d.columns
+              if (m := re.fullmatch(r"≥\d+(?: days)? in (\d+) before", c))), 365)
     names = list(d["disease"])
-    fig = _fig(plt, 9, 0.36 * len(names) + 1.8)
+    fig = _fig(plt, 9.5, 0.62 * len(names) + 2.0)
     ax = fig.add_subplot(1, 1, 1)
     _style(ax)
+    band_x = 13.4
     ax.axvspan(9, 20, color=GRID, alpha=0.6, linewidth=0)
-    ax.text(13.4, -1.5, "<20\n(masked)", ha="center", va="bottom", fontsize=7, color=INK2)
-    for s, (label, color, col) in enumerate(series):
-        off = (1 - s) * 0.22
-        for r, v in enumerate(d[col].map(parse_count)):
-            yy = len(names) - 1 - r + off
-            if v == MASK:
-                ax.plot(13.4, yy, "o", markerfacecolor="none", markeredgecolor=color,
-                        markersize=7, markeredgewidth=1.5)
-            else:
-                ax.plot(v, yy, "o", color=color, markersize=7, markeredgecolor=SURFACE,
-                        markeredgewidth=1.5, label=label if r == 0 else None)
+    ax.text(band_x, -1.5, "<20\n(masked)", ha="center", va="bottom", fontsize=7, color=INK2)
+    styles = {tt: ("D", 6, 0.5) if (len(ts) > 1 and tt == ts[0]) else ("o", 7, 0.0)
+              for tt in ts}
+    for r, row in enumerate(d.itertuples(index=False)):
+        base = len(names) - 1 - r
+        v = parse_count(d["with data"].iloc[r])
+        ax.plot(band_x if v == MASK else v, base + 0.32, "|", color=INK2, markersize=9,
+                markeredgewidth=2)
+        for k, (side, color, _) in enumerate(SIDES):
+            yy = base + 0.12 - k * 0.2
+            xs = []
+            for tt in ts:
+                c = cols.get((side, tt))
+                if c is None:
+                    continue
+                v = parse_count(d[c].iloc[r])
+                marker, size, tint = styles[tt]
+                fill = _tint(color, tint) if tint else color
+                if v == MASK:
+                    ax.plot(band_x, yy, marker, markerfacecolor="none",
+                            markeredgecolor=color, markersize=size, markeredgewidth=1.3)
+                else:
+                    xs.append(v)
+                    ax.plot(v, yy, marker, color=fill, markersize=size,
+                            markeredgecolor=color if tint else SURFACE,
+                            markeredgewidth=1.0 if tint else 1.5, zorder=3)
+            if len(xs) > 1:
+                ax.plot([min(xs), max(xs)], [yy, yy], color=color, linewidth=1.2,
+                        alpha=0.6, zorder=2)
     ax.set_xscale("log")
     ax.set_xlim(9, None)
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{int(x):,}"))
     ax.set_yticks(range(len(names))[::-1], [n[:40] for n in names])
     ax.set_xlabel("persons (log scale)", fontsize=9, color=INK2)
-    handles, labels = ax.get_legend_handles_labels()
-    handles.append(plt.Line2D([], [], marker="o", linestyle="none", markerfacecolor="none",
-                              markeredgecolor=INK2, markersize=7, markeredgewidth=1.5))
-    labels.append("hollow = <20 (masked)")
-    _top_legend(ax, "Persons with Fitbit data around the first diagnosis, by disease",
-                handles, labels, ncol=2)
+    L2D = plt.Line2D
+    # Legend fills column by column: [any data, masked] then one column per side.
+    handles = [L2D([], [], marker="|", linestyle="none", color=INK2, markersize=9,
+                   markeredgewidth=2),
+               L2D([], [], marker="o", linestyle="none", markerfacecolor="none",
+                   markeredgecolor=INK2, markersize=7, markeredgewidth=1.5)]
+    labels = ["with any Fitbit data", "hollow = <20 (masked)"]
+    for side, color, label in SIDES:
+        for tt in ts:
+            marker, size, tint = styles[tt]
+            handles.append(L2D([], [], marker=marker, linestyle="none",
+                               color=_tint(color, tint) if tint else color,
+                               markeredgecolor=color, markersize=size))
+            labels.append(f"≥{tt} days in {w} {label}")
+    if len(ts) == 1:   # one entry per side: move "masked" last so rows read cleanly
+        handles.append(handles.pop(1))
+        labels.append(labels.pop(1))
+    _top_legend(ax, "Persons with Fitbit data around the first diagnosis, by disease "
+                f"(days of data in the {w} days before / after it)", handles, labels,
+                ncol=4 if len(ts) == 2 else 3)
     ax.set_ylim(-1.6, len(names))
     fig.tight_layout()
     return fig
@@ -243,10 +307,10 @@ def plot_disease_medians(t: dict, plt):
 NO_EGRESS = "PARTICIPANT-LEVEL: do not egress"
 PATIENT_PLOTS = {
     # name: (x column, y column, x label, y label, title, transform)
-    "patients_days": ("days_before", "days_after", "days of data before first dx",
+    "days": ("days_before", "days_after", "days of data before first dx",
                       "days of data on/after first dx",
                       "Days of Fitbit data before vs after the first diagnosis", None),
-    "patients_span": ("lead_days", "follow_days", "first wear day (years relative to first dx)",
+    "span": ("lead_days", "follow_days", "first wear day (years relative to first dx)",
                       "last wear day (years relative to first dx)",
                       "When each person's Fitbit data starts and ends, relative to the "
                       "first diagnosis", "span"),
@@ -295,7 +359,7 @@ def _marginal_hist(a, v: pd.Series, transform, *, vertical: bool):
 
 def plot_patient_facets(per: pd.DataFrame, names: dict, plt, *, x, y, xlabel, ylabel,
                         title, transform=None, kind="any", max_facets=20,
-                        all_id="ALL", min_window_days=30, marginals=False):
+                        all_id="ALL", thresholds=(30,), marginals=False):
     """Faceted dot plot, one facet per disease, one point per person (kind `kind`).
     Day counts go on symmetric-log axes (0 and thousands both readable); the "span"
     transform plots first / last wear day in years relative to the dx, linear. With
@@ -321,8 +385,9 @@ def plot_patient_facets(per: pd.DataFrame, names: dict, plt, *, x, y, xlabel, yl
         ax.axvline(0, color=MUTED, linewidth=0.8)
         ax.axhline(0, color=MUTED, linewidth=0.8)
         if transform is None:
-            ax.axvline(min_window_days, color=MUTED, linewidth=0.8, linestyle=":")
-            ax.axhline(min_window_days, color=MUTED, linewidth=0.8, linestyle=":")
+            for tt in thresholds:   # total days, a guide for the window thresholds
+                ax.axvline(tt, color=MUTED, linewidth=0.8, linestyle=":")
+                ax.axhline(tt, color=MUTED, linewidth=0.8, linestyle=":")
         ax.scatter(xs, ys, s=9, color=BEFORE, alpha=0.45, linewidths=0)
         if transform is None:
             ax.set_xscale("symlog", linthresh=30)
@@ -357,12 +422,14 @@ def plot_patient_facets(per: pd.DataFrame, names: dict, plt, *, x, y, xlabel, yl
     return fig
 
 
-def write_patient_plots(per: pd.DataFrame, names: dict, out_dir: Path, *, kinds=("any",),
-                        max_facets=20, all_id="ALL", min_window_days=30) -> list[Path]:
-    """Participant-level PNGs into `out_dir`, which must be named *DO_NOT_EGRESS*: each
-    PATIENT_PLOTS plot per kind, plain and with marginal histograms (`_marginal`)."""
-    if "DO_NOT_EGRESS" not in out_dir.name:
-        raise ValueError(f"participant-level plots need a DO_NOT_EGRESS folder, got {out_dir}")
+def write_patient_plots(per: pd.DataFrame, names: dict, out_dir: Path, *, prefix: str,
+                        kinds=("any",), max_facets=20, all_id="ALL",
+                        thresholds=(30,)) -> list[Path]:
+    """Participant-level PNGs `out_dir/<prefix>patients-<plot>[-<kind>][-marginal].png`;
+    `prefix` must contain DO_NOT_EGRESS (which .gitignore blocks). Each PATIENT_PLOTS
+    plot per kind, plain and with marginal histograms."""
+    if "DO_NOT_EGRESS" not in prefix:
+        raise ValueError(f"participant-level plot names need DO_NOT_EGRESS, got {prefix!r}")
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -374,8 +441,10 @@ def write_patient_plots(per: pd.DataFrame, names: dict, out_dir: Path, *, kinds=
                 fig = plot_patient_facets(per, names, plt, x=x, y=y, xlabel=xl, ylabel=yl,
                                           title=title, transform=tr, kind=kind,
                                           max_facets=max_facets, all_id=all_id,
-                                          min_window_days=min_window_days, marginals=marg)
-                path = out_dir / f"{name}_{kind}{'_marginal' if marg else ''}.png"
+                                          thresholds=thresholds, marginals=marg)
+                path = out_dir / (f"{prefix}patients-{name}"
+                                  f"{'' if kind == 'any' else '-' + kind}"
+                                  f"{'-marginal' if marg else ''}.png")
                 fig.savefig(path, dpi=150, facecolor=SURFACE, bbox_inches="tight",
                             pad_inches=0.2)
                 plt.close(fig)
@@ -387,7 +456,8 @@ PLOTS = {"pooled_bins": plot_pooled_bins, "pooled_medians": plot_pooled_medians,
          "disease_counts": plot_disease_counts, "disease_medians": plot_disease_medians}
 
 
-def write_plots(report_text: str, out_dir: Path) -> list[Path]:
+def write_plots(report_text: str, out_dir: Path, prefix: str = "") -> list[Path]:
+    """The PLOTS as `out_dir/<prefix><name>.png` (names like 'disease-counts')."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -396,7 +466,7 @@ def write_plots(report_text: str, out_dir: Path) -> list[Path]:
     written = []
     for name, fn in PLOTS.items():
         fig = fn(t, plt)
-        path = out_dir / f"{name}.png"
+        path = out_dir / f"{prefix}{name.replace('_', '-')}.png"
         fig.savefig(path, dpi=150, facecolor=SURFACE, bbox_inches="tight", pad_inches=0.2)
         plt.close(fig)
         written.append(path)
@@ -406,12 +476,12 @@ def write_plots(report_text: str, out_dir: Path) -> list[Path]:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("report")
-    p.add_argument("--out-dir", default="",
-                   help="default: the report path without .md")
+    p.add_argument("--out-dir", default="", help="default: the report's folder")
     args = p.parse_args(argv)
     report = Path(args.report)
-    out = Path(args.out_dir) if args.out_dir else report.with_suffix("")
-    for path in write_plots(report.read_text(), out):
+    out = Path(args.out_dir) if args.out_dir else report.parent
+    stem = report.stem.removesuffix("_report")
+    for path in write_plots(report.read_text(), out, prefix=f"{stem}_plot-"):
         print(f"[plots] wrote {path}", flush=True)
     return 0
 

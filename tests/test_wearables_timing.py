@@ -25,10 +25,11 @@ def _n_dx():
 
 
 def test_profile_counts_quartiles_and_bins():
-    prof = wt.profile(_per(), _n_dx(), min_window_days=10).set_index(["mondo_id", "src"])
+    prof = wt.profile(_per(), _n_dx(), thresholds=(7, 10)).set_index(["mondo_id", "src"])
     r = prof.loc[("M:1", "activity_summary")]
     assert (r["n_wear"], r["n_before"], r["n_after"]) == (30, 29, 30)
-    assert (r["n_pre_win"], r["n_post_win"], r["n_both_win"]) == (20, 30, 20)
+    assert (r["n_pre10"], r["n_post10"], r["n_both10"]) == (20, 30, 20)
+    assert (r["n_pre7"], r["n_post7"], r["n_both7"]) == (23, 30, 23)
     assert r["before_p50"] == 15 and r["after_p50"] == 40
     assert r["before_1-29"] == 29 and r["after_30-89"] == 30 and r["before_730+"] == 0
     hr = prof.loc[("M:1", "heart_rate_minute_level")]
@@ -39,7 +40,7 @@ def test_profile_counts_quartiles_and_bins():
 
 
 def test_masked_masks_counts_not_quartiles():
-    prof = wt.profile(_per(), _n_dx(), min_window_days=10)
+    prof = wt.profile(_per(), _n_dx(), thresholds=(7, 10))
     m = wt.masked(prof, {"M:1": "foo"}).set_index(["mondo_id", "src"])
     hr = m.loc[("M:1", "heart_rate_minute_level")]
     assert (hr["n_wear"], hr["after_p50"], hr["after_1-29"]) == ("<20", "", "<20")
@@ -50,13 +51,15 @@ def test_masked_masks_counts_not_quartiles():
 
 
 def test_report_has_pooled_and_per_disease_sections():
-    prof = wt.profile(_per(), _n_dx(), min_window_days=10)
+    prof = wt.profile(_per(), _n_dx(), thresholds=(7, 10))
     meta = {"cdr": "p.ds", "wear_tables": ["activity_summary"], "flags": ["orphanet_rare"],
             "under": ["MONDO:AI"], "exact": True, "descendants": True, "min_dx_dates": 1,
-            "window_days": 365, "min_window_days": 10, "n_rare_nodes": 2}
+            "window_days": 365, "window_thresholds": [7, 10], "n_rare_nodes": 2}
     md = wt.format_report(prof, {"M:1": "foo syndrome"}, meta, top=10)
     assert "Persons with any selected diagnosis: 310" in md
-    assert "| activity_summary | 30 | 29 | 30 | 20 | 30 | 20 | 15 (8–22) | 40 (40–40) |" in md
+    assert ("| activity_summary | 30 | 29 | 30 | 23 | 30 | 23 | 20 | 30 | 20 | 15 (8–22) | "
+            "40 (40–40) |") in md
+    assert "| ≥7 in 365 before | ≥7 in 365 after | both ≥7 | ≥10 in 365 before |" in md
     assert "| M:1 | foo syndrome | 300 | 30 |" in md and "M:2" not in md
     assert "| foo syndrome | 29 / 30 | 0 / <20 |" in md
 
@@ -119,38 +122,59 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     out = out / "ds"
     assert seen["per"]["win_days"] == ("INT64", 365)
     assert list(zip(seen["per"]["mondo"][1], seen["per"]["cid"][1])) == [("MONDO:A", 123)]
-    tsv = pd.read_csv(out / "wearables_timing_ai.tsv", sep="\t", dtype=str)
+    tsv = pd.read_csv(out / "ai_table.tsv", sep="\t", dtype=str)
     assert set(tsv["n_wear"]) <= {"0", "30", "<20"}
-    md = (out / "wearables_timing_ai.md").read_text()
+    md = (out / "ai_report.md").read_text()
     assert "CDR: `p.ds`" in md and "| MONDO:A | disease A | 300 | 30 |" in md
+    assert {f.name for f in out.iterdir() if f.is_dir()} == set()   # flat folder
+    assert (out / "ai_mapping.tsv").exists() and (out / "ai_run.json").exists()
 
 
 def test_plots_read_only_the_masked_report(tmp_path):
     pytest = __import__("pytest")
     pytest.importorskip("matplotlib")
     from audits import wearables_timing_plots as wp
-    prof = wt.profile(_per(), _n_dx(), min_window_days=10)
+    prof = wt.profile(_per(), _n_dx(), thresholds=(7, 10))
     meta = {"cdr": "p.ds", "wear_tables": ["activity_summary"], "flags": ["x"],
-            "n_rare_nodes": 2, "window_days": 365, "min_window_days": 30}
+            "n_rare_nodes": 2, "window_days": 365, "window_thresholds": [7, 10]}
     md = wt.format_report(prof, {"M:1": "foo"}, meta, top=10)
     t = wp.read_report(md)
     assert set(t) == {"pooled", "bins_before", "bins_after", "diseases", "kinds"}
     assert wp.parse_count("<20") == wp.MASK and wp.parse_count("1,808") == 1808
     assert wp.parse_iqr("471 (180–1,052)") == (471, 180, 1052) and wp.parse_iqr("—") is None
-    paths = wp.write_plots(md, tmp_path / "plots")
-    assert [p.name for p in paths] == ["pooled_bins.png", "pooled_medians.png",
-                                       "disease_counts.png", "disease_medians.png"]
+    d = t["diseases"]
+    assert wp.window_columns(d)[("both", 7)] == "both ≥7"
+    assert wp.window_columns(d)[("after", 10)] == "≥10 in 365 after"
+    old = pd.DataFrame(columns=["≥30 in 365 before", "≥30 in 365 after", "both"])
+    assert wp.window_columns(old) == {("before", 30): "≥30 in 365 before",
+                                      ("after", 30): "≥30 in 365 after",
+                                      ("both", 30): "both"}
+    paths = wp.write_plots(md, tmp_path, prefix="run_plot-")
+    assert [p.name for p in paths] == ["run_plot-pooled-bins.png", "run_plot-pooled-medians.png",
+                                       "run_plot-disease-counts.png",
+                                       "run_plot-disease-medians.png"]
     assert all(p.stat().st_size > 0 for p in paths)
 
 
-def test_patient_plots_need_a_do_not_egress_folder(tmp_path):
+def test_patient_plots_need_do_not_egress_in_the_name(tmp_path):
     pytest = __import__("pytest")
     pytest.importorskip("matplotlib")
     from audits import wearables_timing_plots as wp
     with pytest.raises(ValueError):
-        wp.write_patient_plots(_per(), {}, tmp_path / "plots")
+        wp.write_patient_plots(_per(), {}, tmp_path, prefix="run_")
     assert wp.facet_order(_per(), wt.ANY, 5, wt.ALL) == [wt.ALL, "M:1"]
-    paths = wp.write_patient_plots(_per(), {"M:1": "foo"}, tmp_path / "x_DO_NOT_EGRESS",
-                                   kinds=(wt.ANY,))
-    assert [p.name for p in paths] == ["patients_days_any.png", "patients_days_any_marginal.png",
-                                       "patients_span_any.png", "patients_span_any_marginal.png"]
+    paths = wp.write_patient_plots(_per(), {"M:1": "foo"}, tmp_path,
+                                   prefix="run_DO_NOT_EGRESS_", kinds=(wt.ANY, "activity_summary"))
+    assert [p.name for p in paths][:4] == [
+        "run_DO_NOT_EGRESS_patients-days.png", "run_DO_NOT_EGRESS_patients-days-marginal.png",
+        "run_DO_NOT_EGRESS_patients-span.png", "run_DO_NOT_EGRESS_patients-span-marginal.png"]
+    assert paths[4].name == "run_DO_NOT_EGRESS_patients-days-activity_summary.png"
+
+
+def test_run_name_is_short_and_readable():
+    names = {"MONDO:0007179": "autoimmune disease", "MONDO:0004995": "cardiovascular disorder"}
+    std = ["orphanet_rare", "gard_rare", "nord_rare", "mondo_rare"]
+    assert wt.run_name(["MONDO:0007179"], names, std, exact=True) == "autoimmune-disease_exact"
+    assert wt.run_name(["MONDO:0004995"], names, ["rare"], min_dx_dates=2) == \
+        "cardiovascular-disorder_rare_dx2"
+    assert wt.run_name([], names, std, descendants=False) == "all-rare_nodesc"
