@@ -67,7 +67,7 @@ def test_typed_wear_sql_and_ctes_parse():
             "sleep_level": {"start_datetime"}}
     sql, found = wt.typed_wear_sql("p.ds", have)
     assert found == ["activity_summary", "heart_rate_minute_level", "sleep_level"]
-    assert "CAST(start_datetime AS DATE)" in sql
+    assert "CAST(t.start_datetime AS DATE)" in sql and " IN (SELECT" not in sql
     assert wt.typed_wear_sql("p.ds", have, intraday=False)[1] == ["activity_summary"]
     ctes = wt.timing_ctes("p.ds", sql)
     for body in (wt.N_DX_SELECT, wt.PER_PERSON_SELECT):

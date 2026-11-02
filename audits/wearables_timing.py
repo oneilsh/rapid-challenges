@@ -72,7 +72,8 @@ def bin_labels(edges=DAY_BINS) -> list[str]:
 def typed_wear_sql(cdr: str, columns_by_table: dict, intraday: bool = True
                    ) -> tuple[str, list]:
     """UNION ALL of (person_id, src, d) over the Fitbit tables present in the CDR, each
-    restricted to persons in the `dx` CTE. Returns (sql, tables used)."""
+    restricted (by a JOIN, not IN: BigQuery rejects the correlated
+    form) to persons in the `cohort` CTE. Returns (sql, tables used)."""
     parts, found = [], []
     for t, cols, is_intraday in _TIMING_TABLES:
         if is_intraday and not intraday:
@@ -85,8 +86,8 @@ def typed_wear_sql(cdr: str, columns_by_table: dict, intraday: bool = True
         if dc is None:
             print(f"[timing] {t}: no date column among {cols}; skipped", flush=True)
             continue
-        parts.append(f"SELECT person_id, '{t}' AS src, CAST({dc} AS DATE) AS d "
-                     f"FROM `{cdr}.{t}` WHERE person_id IN (SELECT person_id FROM dx)")
+        parts.append(f"SELECT t.person_id, '{t}' AS src, CAST(t.{dc} AS DATE) AS d "
+                     f"FROM `{cdr}.{t}` t JOIN cohort c ON t.person_id = c.person_id")
         found.append(t)
     if not parts:
         raise SystemExit("[timing] no Fitbit table found in this CDR")
@@ -119,6 +120,7 @@ dx_all AS (
   SELECT person_id, mondo_id, first_dx FROM dx
   UNION ALL
   SELECT person_id, '{ALL}' AS mondo_id, MIN(first_dx) AS first_dx FROM dx GROUP BY person_id),
+cohort AS (SELECT DISTINCT person_id FROM dx),
 wear_days AS (
   SELECT DISTINCT person_id, src, d FROM (
     {wear_sql})
