@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-patients plot-wearables-timing mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients plot-wearables-timing mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -31,8 +31,9 @@ help:
 	@echo "      ARGS='--no-intraday --window-days 180'"
 	@echo "Locally:"
 	@echo "  make test                  - unit tests (uv run pytest)"
-	@echo "  make wearables-timing-patients - same + participant-level dot plots (Workbench"
-	@echo "                               only, *_DO_NOT_EGRESS folder; PATIENT_KINDS=any,...)"
+	@echo "  make wearables-timing-cardio - same, rare cardiovascular disorders (MONDO:0004995)"
+	@echo "  make wearables-timing-patients [SCOPE=cardio] - + participant-level dot plots"
+	@echo "                               (Workbench only, *_DO_NOT_EGRESS; PATIENT_FACETS=12)"
 	@echo "  make plot-wearables-timing REPORT=results/wearables-timing/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
@@ -85,11 +86,20 @@ wearables-timing: $(WORKSPACE_ENV)
 wearables-timing-autoimmune:
 	$(MAKE) wearables-timing ARGS="$(AUTOIMMUNE_ARGS) $(ARGS)"
 
-# Same, plus PARTICIPANT-LEVEL faceted dot plots (one point per person) in a
-# *_DO_NOT_EGRESS folder under TIMING_OUT. View them on the Workbench only.
-PATIENT_KINDS ?= any,heart_rate_minute_level,sleep_daily_summary
+# Rare cardiovascular disorders (Mondo subtree MONDO:0004995), same rules as autoimmune.
+CARDIO_ARGS = --under MONDO:0004995 --flags orphanet_rare,gard_rare,nord_rare,mondo_rare --exact
+wearables-timing-cardio:
+	$(MAKE) wearables-timing ARGS="$(CARDIO_ARGS) $(ARGS)"
+
+# PARTICIPANT-LEVEL faceted dot plots (one point per person; plain and with marginal
+# histograms) in a *_DO_NOT_EGRESS folder under TIMING_OUT. View on the Workbench only.
+# SCOPE=autoimmune|cardio; intraday tables skipped (they track the daily summaries).
+SCOPE          ?= autoimmune
+SCOPE_ARGS      = $(if $(filter cardio,$(SCOPE)),$(CARDIO_ARGS),$(AUTOIMMUNE_ARGS))
+PATIENT_KINDS  ?= any
+PATIENT_FACETS ?= 12
 wearables-timing-patients:
-	$(MAKE) wearables-timing ARGS="$(AUTOIMMUNE_ARGS) --patient-plots $(PATIENT_KINDS) $(ARGS)"
+	$(MAKE) wearables-timing ARGS="$(SCOPE_ARGS) --no-intraday --patient-plots $(PATIENT_KINDS) --patient-facets $(PATIENT_FACETS) $(ARGS)"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=

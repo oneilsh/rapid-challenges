@@ -260,18 +260,55 @@ def facet_order(per: pd.DataFrame, kind: str, max_facets: int, all_id: str) -> l
     return ([all_id] if all_id in n.index else []) + rest[:max_facets]
 
 
+def _marginal_bins(v: pd.Series, transform):
+    """Histogram edges matching the facet axis: a 0 bin plus log-spaced bins for day
+    counts (symlog axis), even bins for the linear years axis."""
+    import numpy as np
+    if transform is None:
+        hi = max(float(v.max()) if len(v) else 0, 10) + 1
+        return np.concatenate([[-5, 0.5], np.geomspace(1, hi, 28)])  # wide 0 bin
+    lo, hi = (float(v.min()), float(v.max())) if len(v) else (-1, 1)
+    return np.linspace(lo, hi if hi > lo else lo + 1, 40)
+
+
+def _marginal_hist(a, v: pd.Series, transform, *, vertical: bool):
+    """Histogram on marginal axes `a`. For day counts the 0 bin usually dwarfs the rest,
+    so the scale is capped at the tallest other bin and the 0 bar is labeled instead."""
+    import numpy as np
+    edges = _marginal_bins(v, transform)
+    n, _ = np.histogram(v, bins=edges)
+    lo, w = edges[:-1], np.diff(edges)
+    if vertical:
+        a.bar(lo, n, width=w, align="edge", color=BEFORE, edgecolor=SURFACE, linewidth=0.5)
+    else:
+        a.barh(lo, n, height=w, align="edge", color=BEFORE, edgecolor=SURFACE,
+               linewidth=0.5)
+    if transform is None and len(n) > 1 and n[1:].max() > 0 and n[0] > 1.3 * n[1:].max():
+        cap = 1.3 * n[1:].max()
+        (a.set_ylim if vertical else a.set_xlim)(0, cap)
+        kw = {"fontsize": 6.5, "color": INK2}
+        if vertical:
+            a.text(0.6, cap, f"0 days: {n[0]:,}", va="top", ha="left", **kw)
+        else:
+            a.text(cap, 0.6, f"0 days:\n{n[0]:,}", va="bottom", ha="right", **kw)
+
+
 def plot_patient_facets(per: pd.DataFrame, names: dict, plt, *, x, y, xlabel, ylabel,
                         title, transform=None, kind="any", max_facets=20,
-                        all_id="ALL", min_window_days=30):
+                        all_id="ALL", min_window_days=30, marginals=False):
     """Faceted dot plot, one facet per disease, one point per person (kind `kind`).
     Day counts go on symmetric-log axes (0 and thousands both readable); the "span"
-    transform plots first / last wear day in years relative to the dx, linear."""
+    transform plots first / last wear day in years relative to the dx, linear. With
+    `marginals`, each facet gets a histogram of x above it and of y to its right."""
     order = facet_order(per, kind, max_facets, all_id)
     d = per[per["src"] == kind]
-    ncol = 5
+    ncol = 4 if marginals else 5
     nrow = max(1, math.ceil(len(order) / ncol))
-    fig = plt.figure(figsize=(3.0 * ncol, 2.8 * nrow + 0.8), facecolor=SURFACE)
-    axes = fig.subplots(nrow, ncol, sharex=True, sharey=True, squeeze=False).ravel()
+    w, h = (3.6, 3.5) if marginals else (3.0, 2.8)
+    fig = plt.figure(figsize=(w * ncol, h * nrow + 0.8), facecolor=SURFACE)
+    axes = fig.subplots(nrow, ncol, sharex=True, sharey=True, squeeze=False,
+                        gridspec_kw={"hspace": 0.55, "wspace": 0.42} if marginals else None
+                        ).ravel()
     for ax in axes[len(order):]:
         ax.axis("off")
     for ax, m in zip(axes, order):
@@ -291,7 +328,19 @@ def plot_patient_facets(per: pd.DataFrame, names: dict, plt, *, x, y, xlabel, yl
             ax.set_xscale("symlog", linthresh=30)
             ax.set_yscale("symlog", linthresh=30)
         label = "all selected diseases" if m == all_id else names.get(m, m)
-        ax.set_title(f"{str(label)[:34]} (n={len(g):,})", fontsize=8.5, color=INK, loc="left")
+        if marginals:
+            top = ax.inset_axes([0, 1.03, 1, 0.24], sharex=ax)
+            right = ax.inset_axes([1.03, 0, 0.24, 1], sharey=ax)
+            _marginal_hist(top, xs, transform, vertical=True)
+            _marginal_hist(right, ys, transform, vertical=False)
+            for a in (top, right):
+                a.set_facecolor(SURFACE)
+                a.axis("off")
+            top.set_title(f"{str(label)[:34]} (n={len(g):,})", fontsize=8.5, color=INK,
+                          loc="left")
+        else:
+            ax.set_title(f"{str(label)[:34]} (n={len(g):,})", fontsize=8.5, color=INK,
+                         loc="left")
     if transform is None:
         fmt = plt.FuncFormatter(lambda v, _: f"{int(v):,}")
         axes[0].xaxis.set_major_formatter(fmt)
@@ -300,13 +349,18 @@ def plot_patient_facets(per: pd.DataFrame, names: dict, plt, *, x, y, xlabel, yl
     fig.supylabel(ylabel, fontsize=9, color=INK2)
     fig.suptitle(f"{title}; one point per person, kind = {kind}  ·  {NO_EGRESS}",
                  x=0.01, ha="left", fontsize=11, color=INK)
-    fig.tight_layout()
+    if marginals:   # room above row 1 for its histograms + titles, below the suptitle
+        H = h * nrow + 0.8
+        fig.subplots_adjust(top=1 - 1.5 / H, bottom=0.9 / H, left=0.08, right=0.95)
+    else:
+        fig.tight_layout()
     return fig
 
 
 def write_patient_plots(per: pd.DataFrame, names: dict, out_dir: Path, *, kinds=("any",),
                         max_facets=20, all_id="ALL", min_window_days=30) -> list[Path]:
-    """Participant-level PNGs into `out_dir`, which must be named *DO_NOT_EGRESS*."""
+    """Participant-level PNGs into `out_dir`, which must be named *DO_NOT_EGRESS*: each
+    PATIENT_PLOTS plot per kind, plain and with marginal histograms (`_marginal`)."""
     if "DO_NOT_EGRESS" not in out_dir.name:
         raise ValueError(f"participant-level plots need a DO_NOT_EGRESS folder, got {out_dir}")
     import matplotlib
@@ -316,15 +370,16 @@ def write_patient_plots(per: pd.DataFrame, names: dict, out_dir: Path, *, kinds=
     written = []
     for kind in kinds:
         for name, (x, y, xl, yl, title, tr) in PATIENT_PLOTS.items():
-            fig = plot_patient_facets(per, names, plt, x=x, y=y, xlabel=xl, ylabel=yl,
-                                      title=title, transform=tr, kind=kind,
-                                      max_facets=max_facets, all_id=all_id,
-                                      min_window_days=min_window_days)
-            path = out_dir / f"{name}_{kind}.png"
-            fig.savefig(path, dpi=150, facecolor=SURFACE, bbox_inches="tight",
-                        pad_inches=0.2)
-            plt.close(fig)
-            written.append(path)
+            for marg in (False, True):
+                fig = plot_patient_facets(per, names, plt, x=x, y=y, xlabel=xl, ylabel=yl,
+                                          title=title, transform=tr, kind=kind,
+                                          max_facets=max_facets, all_id=all_id,
+                                          min_window_days=min_window_days, marginals=marg)
+                path = out_dir / f"{name}_{kind}{'_marginal' if marg else ''}.png"
+                fig.savefig(path, dpi=150, facecolor=SURFACE, bbox_inches="tight",
+                            pad_inches=0.2)
+                plt.close(fig)
+                written.append(path)
     return written
 
 
