@@ -114,7 +114,7 @@ def plot_coverage(t: dict, plt):
     above the report's coverage threshold (covered episodes) in blue."""
     c = t["coverage"]
     bins = list(c.columns[1:])
-    fig = _fig(plt, 10, 3.4)
+    fig = _fig(plt, 10, 4.0)
     axes = fig.subplots(1, len(c), squeeze=False).ravel()
     for ax, (_, r) in zip(axes, c.iterrows()):
         _style(ax)
