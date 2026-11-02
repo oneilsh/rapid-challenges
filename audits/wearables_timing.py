@@ -145,7 +145,7 @@ SELECT x.mondo_id, w.src,
   DATE_DIFF(x.first_dx, MIN(w.d), DAY) AS lead_days,
   DATE_DIFF(MAX(w.d), x.first_dx, DAY) AS follow_days
 FROM dx_all x JOIN wd w USING (person_id)
-GROUP BY x.person_id, x.mondo_id, w.src
+GROUP BY x.person_id, x.mondo_id, x.first_dx, w.src
 """
 
 
