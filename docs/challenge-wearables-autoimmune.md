@@ -150,10 +150,16 @@ meant to inform.
 * **Format:** A challenge run on the All of Us Researcher Workbench, with one task, one
   evaluation set and one leaderboard.
   * **Wearables required:** Every submission uses wearables data.
-  * **Other data optional:** Teams may add EHR and survey data (treated as one data
-    type), genomic data, or both, and declare which they used. All submissions are scored
-    on the same participants and prediction dates, and the leaderboard lists each
-    entry's data types.
+  * **Data combinations:** Each entry declares one of four combinations: wearables only;
+    wearables + EHR and survey data (treated as one data type); wearables + genomic data;
+    or wearables + EHR and survey + genomic data. Teams may enter one or several. All
+    entries are scored on the same participants and prediction dates, and the leaderboard
+    lists each entry's combination.
+  * **Enforcing declarations:** At scoring time the harness gives each entry only the
+    input data for its declared combination, for example through a separate evaluation
+    workspace or input set per combination (Controlled Tier for those with genomic
+    data). Teams develop on V9 however they like, but a model scored as wearables-only
+    never sees EHR or genomic inputs, and no team touches V10 directly.
   * **Ablation run:** The harness also runs each team's pipeline with only wearables data
     plus age and sex. These runs are reported to show what added data does within each
     method, but no prize or ranking depends on them (see Judging and prizes).
@@ -196,13 +202,15 @@ meant to inform.
 * **Team rules:** Teams of up to 5, with one team per person. Leaderboard submissions are
   limited in Phase 1, and final code must reproduce the submitted predictions.
 * **Judging and prizes:** The primary metric determines the leaderboard. Prizes go to
-  absolute scores within groups of entries, never to a team's gain over its own reduced
-  model, which a team could inflate with a deliberately weak wearables-only run:
-  * **Best overall:** the highest primary score with any combination of data types.
-  * **Best wearables-only:** the highest score among entries using wearables data alone.
-  * **Best using genomic data:** the highest score among entries that use genomic data.
-  * A category requires at least 3 eligible entries to be awarded. We announce this at
+  absolute scores within each declared combination, never to a team's gain over its own
+  ablation run, which a team could inflate with a deliberately weak wearables-only run:
+  * **Best wearables-only**, **best wearables + EHR and survey**, **best wearables +
+    genomic** and **best wearables + EHR and survey + genomic:** the highest primary
+    score among entries declaring that combination.
+  * A combination requires at least 3 eligible entries to be awarded. We announce this at
     launch, so an unpopular combination simply goes unawarded.
+  * An overall prize across combinations is optional; it would most likely go to an
+    entry that also wins its combination.
   * A panel of clinicians (rheumatology, neurology) and data scientists reviews the top
     submissions' reports. The panel can disqualify a submission but does not reorder
     rankings.
@@ -256,10 +264,17 @@ alongside the rankings, so it adds no work for teams.
 * **Cross-site generalization:** All of Us EHR data come from many health care provider
   organizations, each recorded as an obfuscated source code (`src_id`). Coding and
   utilization practices differ between sites, so a model that works at familiar sites
-  may not transfer. We hold out a set of sites entirely: their participants are absent
-  from the V9 training data, and we report performance on them separately from
-  performance at training sites, in both the V9 test split and the V10 holdout. Whether
-  enough sites have enough episodes for this is still to be checked (see Open items).
+  may not transfer. We intend to report performance on sites a model was not developed
+  on, separately from performance at familiar sites, but two constraints shape how:
+  * **V9 cannot hide sites:** teams in standard workspaces see all V9 data, so held-out
+    sites must come from V10, ideally sites that first contribute data in V10. If there
+    are none, we report V10 performance by site group without a true holdout.
+  * **Small numbers per site:** rare disease patients with wearables data are spread
+    across many sites, so sites will likely need to be pooled into groups. If even that
+    is too thin, site generalization can be measured on acute episodes in the general
+    wearables population, which is far larger.
+
+  The feasibility of each option is still to be checked (see Open items).
 * **Robustness:** Results per named disease (Sjögren syndrome, SLE, myasthenia gravis)
   where counts allow, and by amount of recent wear (14–20 vs 21 or more days in the
   30-day window).
@@ -297,8 +312,12 @@ alongside the rankings, so it adds no work for teams.
 * **Harness:** Choose the workflow mechanism and allowed image registries, how inputs are
   truncated at each prediction date, and how compute is provided and limited.
 * **Sites:** Count how many EHR sites (`src_id`) the cohort spans and how many have enough
-  covered episodes to hold out; participants seen at more than one site need a rule
-  (e.g., assignment to the site holding most of their visits).
+  covered episodes to evaluate on (the events audit now reports this), and check
+  whether V10 adds sites absent from V9. Participants seen at more than one site need a
+  rule (e.g., assignment to the site holding most of their visits).
+* **Evaluation workspaces:** Confirm that the Workbench can provide per-combination
+  workspaces or input sets for scoring, including a Controlled Tier one for genomic
+  entries.
 * **Report contents:** Settle the required sections of the team report.
 * **Visit types:** Decide whether observation stays (visit concept 581385) count as acute
   episodes.
