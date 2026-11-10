@@ -9,18 +9,26 @@ from audits import wearables_timing as wt
 def _ev():
     """Disease M:1 (ALL mirrors it): 25 persons each with one ED visit 10 days after dx,
     fully covered (30 Fitbit days in the lookback); persons 0-4 have a second, inpatient
-    visit at day 40 with 3 covered days; persons 0-21 an ED visit before dx."""
+    visit at day 40 with 3 covered days; persons 0-21 an ED visit before dx. Episodes of
+    persons 0-19 are recorded at EHR source 'EHR site 7', the rest at 'EHR site 3'."""
     rows = []
     for m in ("M:1", wt.ALL):
         for pid in range(25):
-            rows.append((pid, m, 10, True, False, 30))
+            site = "EHR site 7" if pid < 20 else "EHR site 3"
+            rows.append((pid, m, 10, True, False, site, 30))
             if pid < 5:
-                rows.append((pid, m, 40, False, True, 3))
+                rows.append((pid, m, 40, False, True, site, 3))
             if pid < 22:
-                rows.append((pid, m, -100, True, False, 20))
-            rows.append((pid, m, 0, True, True, 30))           # dx day: excluded
+                rows.append((pid, m, -100, True, False, site, 20))
+            rows.append((pid, m, 0, True, True, site, 30))     # dx day: excluded
     return pd.DataFrame(rows, columns=["pid", "mondo_id", "rel_day", "is_ed", "is_ip",
-                                       "cov_days"])
+                                       "site", "cov_days"])
+
+
+def _psite():
+    """Primary EHR source per person: 0-19 site 7, 20-27 site 3, 28-29 a portal."""
+    return pd.DataFrame({"pid": range(30), "primary_site": ["EHR site 7"] * 20
+                         + ["EHR site 3"] * 8 + ["Participant Portal: PTSC"] * 2})
 
 
 def _expo():
@@ -63,6 +71,23 @@ def test_coverage_bins_and_report():
     assert t.loc[("M:1", "inpatient"), "cov_per_1k"] == ""
 
 
+def test_site_summary_ranks_sources_and_hides_codes():
+    sites = we.site_summary(_ev(), _psite(), _expo(), min_cov=14)
+    assert list(sites["site"]) == ["site 1", "site 2", "Participant Portal: PTSC"]
+    assert list(sites["n_persons"]) == [20, 8, 2]
+    assert list(sites["n_cov"]) == [20, 5, 0] and list(sites["n_cov_p"]) == [20, 5, 0]
+    meta = {"cdr": "p.ds", "wear_tables": ["activity_summary"], "flags": ["x"],
+            "n_rare_nodes": 1, "lookback": 30, "min_cov": 14, "washout": 7,
+            "site_table": "visit_occurrence_ext", "site_tables": ["visit_occurrence_ext"]}
+    s = we.summarize(_ev(), _expo(), _n_dx(), min_cov=14)
+    vt = pd.DataFrame({"visit_concept_id": [9203], "concept_name": ["ER"],
+                       "n_visits": [40], "n_persons": [25]})
+    md = we.format_report(s, vt, {}, {"M:1": "foo"}, meta, sites=sites)
+    assert "| site 1 | 20 | 20 | 20 |" in md and "| site 2 | <20 | <20 | <20 |" in md
+    assert "Sources: 3 · with >= 20 cohort persons: 1" in md
+    assert "EHR site 7" not in md and "EHR site 3" not in md
+
+
 def test_events_sql_parses():
     sqlglot = __import__("pytest").importorskip("sqlglot")
     sql, _ = wt.typed_wear_sql("p.ds", {"activity_summary": {"date"}}, intraday=False)
@@ -70,6 +95,13 @@ def test_events_sql_parses():
     for body in (we.EVENTS_SELECT, we.EXPOSURE_SELECT,
                  we.VISIT_TYPES_SELECT.format(cdr="p.ds"), wt.N_DX_SELECT):
         sqlglot.parse_one(ctes + body, read="bigquery")
+    site_ctes = (wt.timing_ctes("p.ds", sql)
+                 + we.events_ctes("visit_occurrence_ext").replace("{cdr}", "p.ds"))
+    assert "LEFT JOIN `p.ds.visit_occurrence_ext` vx" in site_ctes
+    for body in (we.EVENTS_SELECT,
+                 we.PERSON_SITE_SELECT.format(cdr="p.ds", site_table="visit_occurrence_ext")):
+        sqlglot.parse_one(site_ctes + body, read="bigquery")
+    sqlglot.parse_one(we.SITE_TABLES_SELECT.format(cdr="p.ds"), read="bigquery")
     assert "{cdr}" not in ctes and " IN (SELECT" not in ctes
     assert "IN (9203, 262, 8870)" in ctes and "IN (9201, 262, 8717)" in ctes
     assert "COUNTIF(new_ep) OVER (PARTITION BY person_id ORDER BY vd)" in ctes
@@ -94,6 +126,12 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     seen = {}
 
     def fake_query(client, sql, params=None):
+        if "ENDS_WITH(table_name" in sql:
+            return pd.DataFrame({"table_name": ["condition_occurrence_ext",
+                                                "visit_occurrence_ext"]})
+        if "primary_site" in sql:
+            seen["site"] = sql
+            return _psite()
         if "SELECT * FROM mt" in sql:
             return pd.DataFrame({"concept_id_1": [123], "concept_id_2": [123],
                                  "relationship_id": ["Maps to"]})
@@ -126,6 +164,9 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     md = (out / "ai_events-report.md").read_text()
     assert "| MONDO:A | disease A | 30 |" in md
     assert (out / "ai_events-table.tsv").exists() and (out / "ai_visit-types.tsv").exists()
+    assert "`p.ds.visit_occurrence_ext`" in seen["site"]
+    assert "| site 1 | 20 | 20 | 20 |" in md and (out / "ai_sites.tsv").exists()
+    assert "EHR site 7" not in (out / "ai_sites.tsv").read_text()
 
 
 def test_plots_read_only_the_masked_report(tmp_path):

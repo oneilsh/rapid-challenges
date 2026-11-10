@@ -154,9 +154,9 @@ meant to inform.
     type), genomic data, or both, and declare which they used. All submissions are scored
     on the same participants and prediction dates, and the leaderboard lists each
     entry's data types.
-  * **Reduced model:** Each team's pipeline is also run with only wearables data plus age
-    and sex, so that the gain from added data is measured within each team's method
-    rather than by comparing different teams.
+  * **Ablation run:** The harness also runs each team's pipeline with only wearables data
+    plus age and sex. These runs are reported to show what added data does within each
+    method, but no prize or ranking depends on them (see Judging and prizes).
 * **Organizer-prepared data:** To avoid misunderstandings about the outcome and leakage
   of future information, we prepare the cohort, the prediction dates, the outcome labels
   for training data, and the input data available as of each prediction date. Teams are
@@ -179,10 +179,12 @@ meant to inform.
   * **Phase 3, analysis and reporting (about 2 months):** Stratified results, review of
     team reports, and winners' write-ups.
 * **Expected submissions:**
-  * **Code and model:** code that prepares features from the organizer-provided inputs
-    and a trained model, packaged to run through the harness. The harness will likely be
-    built on the Workbench's workflow tools (Cromwell/WDL, dsub and Nextflow are
-    supported [8]); the exact mechanism will be settled in Phase 0.
+  * **Code and model:** a container image with the team's code, which prepares features
+    from the organizer-provided inputs, plus a trained model, run through the harness.
+    The harness will likely be built on the Workbench's workflow tools (Cromwell/WDL,
+    dsub and Nextflow are supported, each running steps in container images [8]); the
+    exact mechanism, including which image registries are allowed, will be settled in
+    Phase 0.
   * **Declaration** of the data types used.
   * **Report:** a short methods report (no more than 4 pages) describing the approach,
     the data types used and why, and an analysis of failure cases. The required
@@ -193,35 +195,28 @@ meant to inform.
   Teams from ineligible institutions may participate through an eligible member.
 * **Team rules:** Teams of up to 5, with one team per person. Leaderboard submissions are
   limited in Phase 1, and final code must reproduce the submitted predictions.
-* **Judging and prizes:** The primary metric determines the leaderboard. Prize
-  categories are:
+* **Judging and prizes:** The primary metric determines the leaderboard. Prizes go to
+  absolute scores within groups of entries, never to a team's gain over its own reduced
+  model, which a team could inflate with a deliberately weak wearables-only run:
   * **Best overall:** the highest primary score with any combination of data types.
-  * **Best wearables-only:** the highest score among the wearables-only runs.
-  * **Largest gain from EHR and survey data** and **largest gain from genomic data:** the
-    largest improvement of a team's full model over its own wearables-only run, among
-    teams that added that data type.
+  * **Best wearables-only:** the highest score among entries using wearables data alone.
+  * **Best using genomic data:** the highest score among entries that use genomic data.
   * A category requires at least 3 eligible entries to be awarded. We announce this at
     launch, so an unpopular combination simply goes unawarded.
-  * Because the gain prizes compare a team against itself, a team could inflate its gain
-    with a deliberately weak wearables-only run. The harness reduces this risk by running
-    the same pipeline with data types withheld rather than accepting a separate reduced
-    model; in addition, a team's wearables-only run must clear the personal-baseline
-    heuristic for its gain to be prize-eligible, and reviewers check the code of gain
-    prize candidates.
   * A panel of clinicians (rheumatology, neurology) and data scientists reviews the top
     submissions' reports. The panel can disqualify a submission but does not reorder
     rankings.
-* **Down-selection:** Teams whose wearables-only run beats the personal-baseline
-  heuristic on the Phase 1 validation split advance to Phase 2. This serves as a quality
+* **Down-selection:** Teams whose submission beats the personal-baseline heuristic on the
+  Phase 1 validation split advance to Phase 2. This serves as a quality
   gate only, with no cap on the number of teams.
 
 ## **Evaluation Framework**
 
 *Define primary and secondary metrics, evaluation datasets, statistical methods, qualitative review where needed, success thresholds, tie-breaking, and requirements for robustness, calibration, generalizability, reproducibility, interpretability, fairness, and failure analysis.*
 
-Only the primary metric and the gain measures decide rankings and prizes. Everything else
-is computed by the organizers from the same submitted predictions and reported alongside
-the rankings, so it adds no work for teams.
+Only the primary metric decides rankings and prizes. Everything else is computed by the
+organizers from the submitted predictions and the harness's ablation runs, and reported
+alongside the rankings, so it adds no work for teams.
 
 * **Evaluation datasets:**
   * **Primary:** the V10 prospective holdout (prediction dates after the V9 data cutoff).
@@ -229,13 +224,20 @@ the rankings, so it adds no work for teams.
   * **Evaluation unit:** person-days, with every eligible prediction date scored.
 * **Primary metric:** Area under the precision-recall curve (AUPRC) for the pooled rare
   autoimmune cohort, which suits a positive rate of roughly 7% per 30-day window.
-* **Value of each data type:**
-  * **Added data:** each team's AUPRC gain of its full model over its own wearables-only
-    run, reported by the data types added. This determines the gain prizes.
-  * **Wearables over the EHR:** for teams using EHR and survey data, the AUPRC gain over
-    the organizers' EHR-only baseline on the same prediction dates. Because this
-    baseline is deliberately simple, we report this comparison as a reference point and
-    not as a precise estimate of what wearables add.
+* **Value of each data type:** Reported, not scored, so there is nothing to gain by
+  gaming it.
+  * **Across the field:** the best score among entries using a data type against the best
+    score among entries without it (e.g., the best wearables + EHR entry against the best
+    wearables-only entry), compared by paired bootstrap. Because these are each group's
+    best entries, no single team can inflate the difference, and it answers the
+    question at the level of current methods.
+  * **Within methods:** each team's score against its harness-run wearables-only
+    ablation, summarized across teams by data type added. This shows how consistently
+    added data helps, as context for the field-level result.
+  * **Wearables over the EHR:** the best entries using EHR and survey data against the
+    organizers' EHR-only baseline on the same prediction dates. Because this baseline is
+    deliberately simple, we treat this comparison as a reference point and not as a
+    precise estimate of what wearables add.
 * **Statistical methods:** Confidence intervals come from bootstrap resampling of
   participants rather than person-days (1,000 resamples), so that repeat episodes from a
   single person do not inflate certainty. To avoid chains of overlapping intervals
@@ -243,23 +245,29 @@ the rankings, so it adds no work for teams.
   paired bootstrap; teams whose difference from the leader is not significant share
   first place, and the remaining teams are ranked by point estimate.
 * **Success thresholds:**
-  * Wearables-only runs must beat the personal-baseline heuristic.
-  * A data-type gain counts, and is prize-eligible, only if the lower 95% bound of the
-    full model's gain over the team's wearables-only run is above 0.
+  * Every submission must beat the personal-baseline heuristic.
+  * We consider a data type to add value if the lower 95% bound of the field-level
+    difference described above is above 0.
 * **Tie-breaking:** Better calibration (lower Brier score), then earlier final
   submission.
 * **Calibration:** Brier score, calibration slope and intercept, and reliability curves
   for every submission. Calibration serves as the first tie-breaker, and poorly
   calibrated models are flagged in the results.
-* **Fairness:** All of Us places particular emphasis on populations underrepresented in
-  research, so we report AUPRC and calibration by sex, age band, race and ethnicity, and
-  income, wherever each subgroup has at least 20 participants. All of Us data, although
-  extensive, are not a random sample, and wearables data come from participants who
-  chose to share their own devices (or joined a device study); the results therefore
-  also describe who in the cohort has wearables data at all.
-* **Robustness and generalizability:** Results per named disease (Sjögren syndrome, SLE,
-  myasthenia gravis) where counts allow, and by amount of recent wear (14–20 vs 21 or
-  more days in the 30-day window).
+* **Cross-site generalization:** All of Us EHR data come from many health care provider
+  organizations, each recorded as an obfuscated source code (`src_id`). Coding and
+  utilization practices differ between sites, so a model that works at familiar sites
+  may not transfer. We hold out a set of sites entirely: their participants are absent
+  from the V9 training data, and we report performance on them separately from
+  performance at training sites, in both the V9 test split and the V10 holdout. Whether
+  enough sites have enough episodes for this is still to be checked (see Open items).
+* **Robustness:** Results per named disease (Sjögren syndrome, SLE, myasthenia gravis)
+  where counts allow, and by amount of recent wear (14–20 vs 21 or more days in the
+  30-day window).
+* **Subgroups:** AUPRC and calibration by sex, age band, and race and ethnicity, wherever
+  each subgroup has at least 20 participants. All of Us data, although extensive, are not
+  a random sample, and wearables data come from participants who chose to share their
+  own devices (or joined a device study); the results therefore also describe who in the
+  cohort has wearables data at all.
 * **Reproducibility:** We rerun final submissions through the harness with fixed seeds,
   and predictions must match the submitted ones within tolerance.
 * **Interpretability and failure analysis:** Covered in each team's report, reviewed
@@ -286,8 +294,11 @@ the rankings, so it adds no work for teams.
   with covered episodes, also have whole-genome data. If coverage is partial, we need to
   decide whether genomic entries are scored on the full cohort (allowing missing genomes)
   or on the genome subset.
-* **Harness:** Choose the workflow mechanism, how inputs are truncated at each prediction
-  date, and how compute is provided and limited.
+* **Harness:** Choose the workflow mechanism and allowed image registries, how inputs are
+  truncated at each prediction date, and how compute is provided and limited.
+* **Sites:** Count how many EHR sites (`src_id`) the cohort spans and how many have enough
+  covered episodes to hold out; participants seen at more than one site need a rule
+  (e.g., assignment to the site holding most of their visits).
 * **Report contents:** Settle the required sections of the team report.
 * **Visit types:** Decide whether observation stays (visit concept 581385) count as acute
   episodes.

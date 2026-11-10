@@ -65,12 +65,17 @@ def _ids(ids) -> str:
     return ", ".join(str(i) for i in ids)
 
 
-def events_ctes() -> str:
+def events_ctes(site_table: str | None = None) -> str:
     """Appended to `timing_ctes(...)` (daily summaries only). Extra param: @washout
     INT64 (days between visit starts that still belong to one episode).
     `wdays` = (person, Fitbit day); `wp` = cohort persons with Fitbit data; `pids` = a
     per-run rank standing in for person_id; `ev` = (person, disease, first_dx, episode
-    start date) with ED / inpatient flags."""
+    start date) with ED / inpatient flags and `site`, the EHR source (`src_id` of
+    `site_table`, e.g. visit_occurrence_ext) of the episode's first day, or NULL when no
+    site table is given."""
+    site_join = (f"\n  LEFT JOIN `{{cdr}}.{site_table}` vx "
+                 "ON vx.visit_occurrence_id = v.visit_occurrence_id" if site_table else "")
+    site_col = "vx.src_id" if site_table else "CAST(NULL AS STRING)"
     return f""",
 wdays AS (SELECT DISTINCT person_id, d FROM wear_days),
 wp AS (SELECT DISTINCT person_id FROM wdays),
@@ -84,10 +89,10 @@ vt AS (
   GROUP BY descendant_concept_id),
 vis AS (
   SELECT v.person_id, v.visit_occurrence_id, CAST(v.visit_start_date AS DATE) AS vd,
-         vt.is_ed, vt.is_ip
+         vt.is_ed, vt.is_ip, {site_col} AS site
   FROM `{{cdr}}.visit_occurrence` v
   JOIN vt ON v.visit_concept_id = vt.cid
-  JOIN wp ON v.person_id = wp.person_id),
+  JOIN wp ON v.person_id = wp.person_id{site_join}),
 acute AS (SELECT DISTINCT person_id, vd FROM vis),
 acute_new AS (
   SELECT person_id, vd,
@@ -100,13 +105,15 @@ acute_ep AS (
   FROM acute_new),
 ev_day AS (
   SELECT x.person_id, x.mondo_id, x.first_dx, v.vd,
-         LOGICAL_OR(v.is_ed) AS is_ed, LOGICAL_OR(v.is_ip) AS is_ip
+         LOGICAL_OR(v.is_ed) AS is_ed, LOGICAL_OR(v.is_ip) AS is_ip,
+         ARRAY_AGG(v.site IGNORE NULLS ORDER BY v.site LIMIT 1)[SAFE_OFFSET(0)] AS site
   FROM dx_all x
   JOIN vis v ON v.person_id = x.person_id
   GROUP BY x.person_id, x.mondo_id, x.first_dx, v.vd),
 ev AS (
   SELECT e.person_id, e.mondo_id, e.first_dx, MIN(e.vd) AS vd,
-         LOGICAL_OR(e.is_ed) AS is_ed, LOGICAL_OR(e.is_ip) AS is_ip
+         LOGICAL_OR(e.is_ed) AS is_ed, LOGICAL_OR(e.is_ip) AS is_ip,
+         ARRAY_AGG(e.site IGNORE NULLS ORDER BY e.vd LIMIT 1)[SAFE_OFFSET(0)] AS site
   FROM ev_day e
   JOIN acute_ep a ON a.person_id = e.person_id AND a.vd = e.vd
   GROUP BY e.person_id, e.mondo_id, e.first_dx, a.ep)
@@ -116,12 +123,34 @@ ev AS (
 # One row per (person, disease, event date). Extra param: @lookback INT64.
 EVENTS_SELECT = """
 SELECT p.pid, e.mondo_id, DATE_DIFF(e.vd, e.first_dx, DAY) AS rel_day,
-       e.is_ed, e.is_ip, COUNT(w.d) AS cov_days
+       e.is_ed, e.is_ip, e.site, COUNT(w.d) AS cov_days
 FROM ev e
 JOIN pids p ON p.person_id = e.person_id
 LEFT JOIN wdays w ON w.person_id = e.person_id
   AND w.d >= DATE_SUB(e.vd, INTERVAL @lookback DAY) AND w.d < e.vd
-GROUP BY p.pid, e.mondo_id, e.vd, e.first_dx, e.is_ed, e.is_ip
+GROUP BY p.pid, e.mondo_id, e.vd, e.first_dx, e.is_ed, e.is_ip, e.site
+"""
+
+# Tables carrying an EHR source column (All of Us `*_ext` tables, `src_id`).
+SITE_TABLES_SELECT = """
+SELECT table_name FROM `{cdr}.INFORMATION_SCHEMA.COLUMNS`
+WHERE column_name = 'src_id' AND ENDS_WITH(table_name, '_ext')
+ORDER BY table_name
+"""
+
+# One row per cohort person: the EHR source with most of their visits (any visit type).
+PERSON_SITE_SELECT = """
+SELECT p.pid,
+       ARRAY_AGG(s.src_id ORDER BY s.n DESC, s.src_id LIMIT 1)[OFFSET(0)] AS primary_site
+FROM (
+  SELECT v.person_id, vx.src_id, COUNT(*) AS n
+  FROM `{cdr}.visit_occurrence` v
+  JOIN `{cdr}.{site_table}` vx ON vx.visit_occurrence_id = v.visit_occurrence_id
+  JOIN wp ON v.person_id = wp.person_id
+  WHERE vx.src_id IS NOT NULL
+  GROUP BY v.person_id, vx.src_id) s
+JOIN pids p ON p.person_id = s.person_id
+GROUP BY p.pid
 """
 
 # One row per (person, disease): Fitbit days before / after the first dx.
@@ -193,6 +222,30 @@ def coverage_bins(ev: pd.DataFrame, cls: str, edges=COV_BINS) -> dict:
             for lab, lo, h in zip(labs, edges, hi)}
 
 
+def site_label(src_id: str, rank: int) -> str:
+    """Published label for an EHR source: participant-portal sources keep their (non-site)
+    name, EHR sites become 'site <rank>' so no source code leaves the Workbench."""
+    s = str(src_id)
+    return s if s.lower().startswith("participant portal") else f"site {rank}"
+
+
+def site_summary(ev: pd.DataFrame, psite: pd.DataFrame, expo: pd.DataFrame, *,
+                 min_cov: int) -> pd.DataFrame:
+    """Per EHR source, for the pooled (ALL) cohort: persons whose primary source it is,
+    covered ED / inpatient episodes after dx whose first day was recorded there, and
+    persons with such an episode. Rows sorted by persons; labels from `site_label`."""
+    persons = psite[psite["pid"].isin(expo.loc[expo["mondo_id"] == ALL, "pid"])]
+    e = ev[(ev["mondo_id"] == ALL) & (ev["rel_day"] > 0) & (ev["cov_days"] >= min_cov)]
+    e = e[event_class_mask(e, "ed_or_inpatient")]
+    out = pd.DataFrame({"n_persons": persons.groupby("primary_site").size()})
+    out["n_cov"] = e.groupby("site").size()
+    out["n_cov_p"] = e.groupby("site")["pid"].nunique()
+    out = out.fillna(0).astype(int).sort_values(["n_persons", "n_cov"], ascending=False)
+    out = out.reset_index().rename(columns={"index": "src_id", "primary_site": "src_id"})
+    out.insert(0, "site", [site_label(s, i + 1) for i, s in enumerate(out["src_id"])])
+    return out.drop(columns="src_id")
+
+
 COUNT_COLS = ["n_dx", "n_wear", "n_ev", "n_ev_p", "n_cov", "n_cov_p", "n_cov_p2",
               "n_cov_pre", "n_cov_pre_p"]
 
@@ -219,7 +272,8 @@ EVENT_HEAD = ("events after dx | persons | covered events | persons | persons wi
 
 
 def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: dict,
-                  meta: dict, *, floor: int = EGRESS_FLOOR, top_visit_types: int = 15) -> str:
+                  meta: dict, *, sites: pd.DataFrame | None = None,
+                  floor: int = EGRESS_FLOOR, top_visit_types: int = 15) -> str:
     lb, mc = meta["lookback"], meta["min_cov"]
     L = ["# Wearables x ED / inpatient events (All of Us)", "",
          f"CDR: `{meta['cdr']}`", "",
@@ -265,6 +319,26 @@ def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: di
             r = d[(d["mondo_id"] == m) & (d["event_class"] == cls)].iloc[0]
             L.append(f"| {m} | {str(names.get(m, m))[:44]} | {cell(r['n_wear'], floor)} | "
                      f"{_row(r, floor)}")
+        L.append("")
+
+    L += ["## By EHR source (all selected diseases)", ""]
+    if sites is None:
+        L += ["No EHR source column found (no `*_ext` table with `src_id` for visits).", ""]
+    else:
+        big = sites[sites["n_persons"] >= floor]
+        L += [f"Source = `src_id` in `{meta.get('site_table')}` (All of Us obfuscated EHR "
+              "source, shown here only by rank). Persons are counted at the source holding "
+              "most of their visits; covered ED / inpatient episodes after dx at the source "
+              "of the episode's first day. Other `*_ext` tables with `src_id`: "
+              f"{', '.join(meta.get('site_tables', [])) or 'none'}.", "",
+              f"Sources: {len(sites):,} · with >= {floor} cohort persons: {len(big):,} · "
+              f"with >= {floor} persons with a covered episode: "
+              f"{int((sites['n_cov_p'] >= floor).sum()):,}", "",
+              "| source | cohort persons | covered episodes | persons with one |",
+              "|---|--:|--:|--:|"]
+        for _, r in sites.iterrows():
+            L.append(f"| {r['site']} | {cell(r['n_persons'], floor)} | "
+                     f"{cell(r['n_cov'], floor)} | {cell(r['n_cov_p'], floor)} |")
         L.append("")
 
     L += [f"## Visit types for the cohort (top {top_visit_types} by visits)", "",
@@ -315,8 +389,11 @@ WHERE table_name IN UNNEST(@tables)""",
                  {"tables": ("STRING", [t for t, _, _ in _TIMING_TABLES])})
     wear_sql, found = typed_wear_sql(
         cdr, cols.groupby("table_name")["column_name"].apply(set).to_dict(), intraday=False)
+    site_tables = list(query(client, SITE_TABLES_SELECT.format(cdr=cdr), {})["table_name"])
+    site_table = "visit_occurrence_ext" if "visit_occurrence_ext" in site_tables else None
+    print(f"[events] EHR source tables: {site_tables or 'none'}", flush=True)
     ctes = (timing_ctes(cdr, wear_sql, descendants=not args.no_descendants)
-            + events_ctes().replace("{cdr}", cdr))
+            + events_ctes(site_table).replace("{cdr}", cdr))
     params = {"mondo": ("STRING", rmap["mondo_id"].tolist()),
               "cid": ("INT64", [int(c) for c in rmap["standard_concept_id"]]),
               "min_dx_dates": ("INT64", int(args.min_dx_dates)),
@@ -331,21 +408,32 @@ WHERE table_name IN UNNEST(@tables)""",
     print("[events] visit types query…", flush=True)
     vtypes = query(client, ctes + VISIT_TYPES_SELECT.format(cdr=cdr), params)
 
+    sites = None
+    if site_table:
+        print("[events] EHR source query…", flush=True)
+        psite = query(client, ctes + PERSON_SITE_SELECT.format(cdr=cdr, site_table=site_table),
+                      params)
+        sites = site_summary(ev, psite, expo, min_cov=args.min_cov)
     summ = summarize(ev, expo, n_dx, min_cov=args.min_cov)
     cov = {"ed_or_inpatient": coverage_bins(ev, "ed_or_inpatient")}
     meta = {"cdr": cdr, "wear_tables": found, "flags": flags, "under": roots,
             "exact": args.exact, "descendants": not args.no_descendants,
             "min_dx_dates": args.min_dx_dates, "lookback": args.lookback,
-            "min_cov": args.min_cov, "washout": args.washout, "n_rare_nodes": int(rmap["mondo_id"].nunique())}
+            "min_cov": args.min_cov, "washout": args.washout,
+            "site_table": site_table, "site_tables": site_tables,
+            "n_rare_nodes": int(rmap["mondo_id"].nunique())}
     tag = args.tag or run_name(roots, names, flags, exact=args.exact,
                                descendants=not args.no_descendants,
                                min_dx_dates=args.min_dx_dates)
     meta["run"] = tag
-    text = format_report(summ, vtypes, cov, names, meta)
+    text = format_report(summ, vtypes, cov, names, meta, sites=sites)
     (out / f"{tag}_events-report.md").write_text(text)
     masked_table(summ, names).to_csv(out / f"{tag}_events-table.tsv", sep="\t", index=False)
     mask_counts(vtypes, ["n_visits", "n_persons"]).to_csv(
         out / f"{tag}_visit-types.tsv", sep="\t", index=False)
+    if sites is not None:
+        mask_counts(sites, ["n_persons", "n_cov", "n_cov_p"]).to_csv(
+            out / f"{tag}_sites.tsv", sep="\t", index=False)
     (out / f"{tag}_events-run.json").write_text(json.dumps(meta, indent=1, default=str))
     try:  # plots are drawn from the masked report text only
         from audits.wearables_events_plots import write_plots
