@@ -160,9 +160,6 @@ meant to inform.
     workspace or input set per combination (Controlled Tier for those with genomic
     data). Teams develop on V9 however they like, but a model scored as wearables-only
     never sees EHR or genomic inputs, and no team touches V10 directly.
-  * **Ablation run:** The harness also runs each team's pipeline with only wearables data
-    plus age and sex. These runs are reported to show what added data does within each
-    method, but no prize or ranking depends on them (see Judging and prizes).
 * **Organizer-prepared data:** To avoid misunderstandings about the outcome and leakage
   of future information, we prepare the cohort, the prediction dates, the outcome labels
   for training data, and the input data available as of each prediction date. Teams are
@@ -202,8 +199,9 @@ meant to inform.
 * **Team rules:** Teams of up to 5, with one team per person. Leaderboard submissions are
   limited in Phase 1, and final code must reproduce the submitted predictions.
 * **Judging and prizes:** The primary metric determines the leaderboard. Prizes go to
-  absolute scores within each declared combination, never to a team's gain over its own
-  ablation run, which a team could inflate with a deliberately weak wearables-only run:
+  absolute scores within each declared combination, never to the difference between a
+  team's entries, which a team could inflate with a deliberately weak wearables-only
+  entry:
   * **Best wearables-only**, **best wearables + EHR and survey**, **best wearables +
     genomic** and **best wearables + EHR and survey + genomic:** the highest primary
     score among entries declaring that combination.
@@ -223,8 +221,8 @@ meant to inform.
 *Define primary and secondary metrics, evaluation datasets, statistical methods, qualitative review where needed, success thresholds, tie-breaking, and requirements for robustness, calibration, generalizability, reproducibility, interpretability, fairness, and failure analysis.*
 
 Only the primary metric decides rankings and prizes. Everything else is computed by the
-organizers from the submitted predictions and the harness's ablation runs, and reported
-alongside the rankings, so it adds no work for teams.
+organizers from the submitted predictions and reported alongside the rankings, so it adds
+no work for teams.
 
 * **Evaluation datasets:**
   * **Primary:** the V10 prospective holdout (prediction dates after the V9 data cutoff).
@@ -239,9 +237,10 @@ alongside the rankings, so it adds no work for teams.
     wearables-only entry), compared by paired bootstrap. Because these are each group's
     best entries, no single team can inflate the difference, and it answers the
     question at the level of current methods.
-  * **Within methods:** each team's score against its harness-run wearables-only
-    ablation, summarized across teams by data type added. This shows how consistently
-    added data helps, as context for the field-level result.
+  * **Within methods:** for teams that enter more than one combination, the difference
+    between their own entries (e.g., their wearables + EHR entry against their
+    wearables-only entry), summarized across teams. This shows how consistently added
+    data helps, as context for the field-level result.
   * **Wearables over the EHR:** the best entries using EHR and survey data against the
     organizers' EHR-only baseline on the same prediction dates. Because this baseline is
     deliberately simple, we treat this comparison as a reference point and not as a
@@ -261,20 +260,14 @@ alongside the rankings, so it adds no work for teams.
 * **Calibration:** Brier score, calibration slope and intercept, and reliability curves
   for every submission. Calibration serves as the first tie-breaker, and poorly
   calibrated models are flagged in the results.
-* **Cross-site generalization:** All of Us EHR data come from many health care provider
-  organizations, each recorded as an obfuscated source code (`src_id`). Coding and
-  utilization practices differ between sites, so a model that works at familiar sites
-  may not transfer. We intend to report performance on sites a model was not developed
-  on, separately from performance at familiar sites, but two constraints shape how:
-  * **V9 cannot hide sites:** teams in standard workspaces see all V9 data, so held-out
-    sites must come from V10, ideally sites that first contribute data in V10. If there
-    are none, we report V10 performance by site group without a true holdout.
-  * **Small numbers per site:** rare disease patients with wearables data are spread
-    across many sites, so sites will likely need to be pooled into groups. If even that
-    is too thin, site generalization can be measured on acute episodes in the general
-    wearables population, which is far larger.
-
-  The feasibility of each option is still to be checked (see Open items).
+* **Site heterogeneity:** All of Us EHR data come from many health care provider
+  organizations, each recorded as an obfuscated source code (`src_id`), and coding and
+  utilization practices differ between them. For each submission we report AUPRC by
+  site group on the V10 holdout, along with a summary of the spread (e.g., the range and
+  the lowest-scoring group). Because rare disease patients with wearables data are spread
+  thinly across sites, sites will be pooled into groups large enough to report. This is
+  scored and reported but not prized; a held-out-site evaluation is not feasible, since
+  teams see every site in V9.
 * **Robustness:** Results per named disease (Sjögren syndrome, SLE, myasthenia gravis)
   where counts allow, and by amount of recent wear (14–20 vs 21 or more days in the
   30-day window).
@@ -311,10 +304,10 @@ alongside the rankings, so it adds no work for teams.
   or on the genome subset.
 * **Harness:** Choose the workflow mechanism and allowed image registries, how inputs are
   truncated at each prediction date, and how compute is provided and limited.
-* **Sites:** Count how many EHR sites (`src_id`) the cohort spans and how many have enough
-  covered episodes to evaluate on (the events audit now reports this), and check
-  whether V10 adds sites absent from V9. Participants seen at more than one site need a
-  rule (e.g., assignment to the site holding most of their visits).
+* **Site groups:** Count how many EHR sites (`src_id`) the cohort spans and how many
+  covered episodes each has (the events audit now reports this), and choose site groups
+  large enough to report. Participants seen at more than one site need a rule (e.g.,
+  assignment to the site holding most of their visits).
 * **Evaluation workspaces:** Confirm that the Workbench can provide per-combination
   workspaces or input sets for scoring, including a Controlled Tier one for genomic
   entries.
