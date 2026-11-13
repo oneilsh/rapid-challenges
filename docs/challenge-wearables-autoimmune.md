@@ -1,4 +1,4 @@
-# AoU Wearables - Diagnostic inference
+# AoU Wearables - Predicting Inpatient and ED Episodes
 
 **Developers/Writers of the Challenge:** Shawn O'Neil, Tony Patelunas
 
@@ -286,9 +286,7 @@ valuable information on challenge results.
   whether to limit how much any one participant can weigh in scoring.
 * **V10 and HealthKit:** The counts above are from the V9 Controlled Tier CDR and Fitbit
   only. We still need to check how much Apple HealthKit data the cohort has, and confirm
-  the timing, follow-up span and access terms for V10. If V10 adds less follow-up than
-  expected, a fallback is to split V9 into training and held-out evaluation data using
-  workspace data access controls, which needs to be tested on the platform.
+  the timing, follow-up span and access terms for V10.
 * **Genomic overlap:** We have not yet checked how many cohort participants, or how many
   with wearables-covered ED or inpatient episodes, also have whole-genome data. It is
   possible that genomics data use is not feasible.
