@@ -74,14 +74,20 @@ patients with rare systemic autoimmune disease.
   disease: there is no shared benchmark or agreed outcome definition, small cohorts make
   overfitting easy and method comparison difficult, and no evaluation separates the
   value of wearables from that of the EHR history that accompanies them.
-* **Feasibility (v8):** Among rare autoimmune patients with Fitbit data, 2,282 ED or
-  inpatient episodes after diagnosis are preceded by at least 14 days of Fitbit data in
-  the prior 30 days. These occur in 414 participants, 241 of whom have two or more. The
-  rate works out to 2.3 episodes per 1,000 days of wear, or roughly a 7% chance of an
-  episode in any 30-day window. Sjögren syndrome contributes 825 such episodes (154
-  participants), SLE 577 (99) and myasthenia gravis 228 (28). Most episodes, however,
-  have no wearables data at all in the month before them (74%); usable data depends on
-  when patients wear their devices, not on how strict the coverage threshold is.
+* **Feasibility (V9):** Among 2,838 rare autoimmune patients with Fitbit data, 2,244
+  ED visits or inpatient stays after diagnosis are preceded by at least 14 days of Fitbit
+  data in the prior 30 days. These occur in 789 participants, 405 of whom have two or
+  more. The rate works out to about 1.2 episodes per 1,000 days of wear, or roughly a 3%
+  chance of an episode in any 30-day window. Sjögren syndrome contributes 700 such
+  episodes (260 participants), SLE 620 (190) and myasthenia gravis 234 (61). ED visits
+  alone account for 1,615 (639 participants). Most episodes, however, have no wearables
+  data at all in the month before them (72%); usable data depends on when patients wear
+  their devices, not on how strict the coverage threshold is.
+* **Prospective holdout size:** Splitting V9 at the V8 data cutoff stands in for the
+  V10 holdout. In the 14 months after that date, participants already diagnosed and
+  wearing a Fitbit had 538 covered episodes (307 participants), and newly enrolled or
+  newly wearing participants added 28 more. If V10 adds a similar span of follow-up, we
+  expect a holdout of roughly 500 episodes in roughly 300 participants.
 * **Baselines:** Baselines are reference points, not competitors, and we intend them to
   be quick first-pass efforts rather than tuned models:
   * **Personal-baseline heuristic (wearables only):** for each prediction date, the
@@ -169,7 +175,10 @@ meant to inform.
   of wearables data in the prior 30, teams output the probability that an ED or
   inpatient episode starts within the next 30 days, using only data dated before the
   prediction date. An episode is a run of ED or inpatient visit starts no more than 7
-  days apart.
+  days apart. An inpatient visit counts only as part of a stay: a visit that ends after
+  the day it starts, or inpatient visits on consecutive days. Some sites code recurring
+  same-day encounters as inpatient visits, and without this rule one site supplied
+  nearly half of all episodes.
 * **Phases and timeline (proposed):**
   * **Phase 0, preparation (about 2 months):** We finalize cohort and outcome
     definitions on V9, prepare the input data, build the baselines and the submission
@@ -229,7 +238,7 @@ no work for teams.
   * **Secondary:** a held-out person-level split of V9.
   * **Evaluation unit:** person-days, with every eligible prediction date scored.
 * **Primary metric:** Area under the precision-recall curve (AUPRC) for the pooled rare
-  autoimmune cohort, which suits a positive rate of roughly 7% per 30-day window.
+  autoimmune cohort, which suits a positive rate of roughly 3% per 30-day window.
 * **Value of each data type:** Reported, not scored, so there is nothing to gain by
   gaming it.
   * **Across the field:** the best score among entries using a data type against the best
@@ -292,21 +301,28 @@ no work for teams.
   over-represents people with chronic disease, loose coding, or both. Requiring codes on
   at least 2 dates, or a specialist visit or disease-specific medication, would tighten
   labels at the cost of cohort size.
-* **Localized scleroderma:** The disease is largely skin-limited, and its diagnosis dates
-  appear unreliable (more covered episodes before diagnosis than after). We propose
-  keeping it in the pooled cohort only, not as a named sub-cohort.
-* **V9 and V10 counts:** All counts above are from v8 and Fitbit only. They need to be
-  confirmed on V9, along with how much Apple HealthKit data the cohort has and the timing
-  and access terms for V10.
+* **Localized scleroderma:** The disease is largely skin-limited, and in v8 its diagnosis
+  dates looked unreliable (more covered episodes before diagnosis than after; this no
+  longer holds in V9). We propose keeping it in the pooled cohort only, not as a named
+  sub-cohort.
+* **Outcome coding across sites:** Visit types are coded differently across EHR sites.
+  The inpatient-stay rule above removes the worst case, but one site still records stays
+  as runs of same-day inpatient visits, and another has many repeat ED visits in a few
+  participants (254 episodes in 26). We need to decide whether to keep ED and inpatient
+  together or use ED visits alone (1,615 covered episodes; a holdout of roughly 400), and
+  whether to limit how much any one participant can weigh in scoring.
+* **V10 and HealthKit:** The counts above are from the V9 Controlled Tier CDR and
+  Fitbit only. We still need to check how much Apple HealthKit data the cohort has, and
+  confirm the timing, follow-up span and access terms for V10.
 * **Genomic overlap:** We have not yet checked how many cohort participants, or how many
   with covered episodes, also have whole-genome data. If coverage is partial, we need to
   decide whether genomic entries are scored on the full cohort (allowing missing genomes)
   or on the genome subset.
 * **Harness:** Choose the workflow mechanism and allowed image registries, how inputs are
   truncated at each prediction date, and how compute is provided and limited.
-* **Site groups:** Count how many EHR sites (`src_id`) the cohort spans and how many
-  covered episodes each has (the events audit now reports this), and choose site groups
-  large enough to report. Participants seen at more than one site need a rule (e.g.,
+* **Site groups:** The cohort spans 55 EHR sources (`src_id`), of which 12 have at
+  least 20 participants with a covered episode. We need to choose site groups large
+  enough to report. Participants seen at more than one site need a rule (e.g.,
   assignment to the site holding most of their visits).
 * **Evaluation workspaces:** Confirm that the Workbench can provide per-combination
   workspaces or input sets for scoring, including a Controlled Tier one for genomic
