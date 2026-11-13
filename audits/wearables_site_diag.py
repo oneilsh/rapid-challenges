@@ -42,15 +42,16 @@ def diag_ctes() -> str:
     return f""",
 ep_rows AS (
   SELECT v.person_id, a.ep, v.visit_occurrence_id, v.visit_concept_id, v.vd, v.ved,
-         v.is_ed, v.is_ip, v.site
+         v.is_ed, v.is_ip, v.site, IFNULL(s.stay, FALSE) AS ip_stay
   FROM vis v
-  JOIN acute_ep a ON a.person_id = v.person_id AND a.vd = v.vd),
+  JOIN acute_ep a ON a.person_id = v.person_id AND a.vd = v.vd
+  LEFT JOIN ip_stay s ON s.person_id = v.person_id AND s.vd = v.vd),
 ep AS (
   SELECT person_id, ep, MIN(vd) AS start, COUNT(DISTINCT vd) AS n_days,
          COUNT(*) AS n_rows, COUNTIF(is_ip) AS n_ip_rows,
          MAX(IF(is_ip, DATE_DIFF(ved, vd, DAY), NULL)) AS max_ip_los,
          LOGICAL_OR(is_ed) AS has_ed,
-         IFNULL(MAX(IF(is_ip, ved, NULL)) > MIN(IF(is_ip, vd, NULL)), FALSE) AS ip_night,
+         LOGICAL_OR(ip_stay) AS ip_night,
          ARRAY_AGG(site IGNORE NULLS ORDER BY vd, site LIMIT 1)[SAFE_OFFSET(0)] AS site
   FROM ep_rows
   GROUP BY person_id, ep),
@@ -189,7 +190,8 @@ def format_diag(eps: pd.DataFrame, ps: pd.DataFrame, focus: str, vt: pd.DataFram
          f"Episodes = the pooled cohort's covered ED / inpatient episodes after the first "
          f"dx (>= {meta['min_cov']} Fitbit days in the {meta['lookback']} days before; "
          f"visits less than {meta['washout'] + 1} days apart merged"
-         + ("; inpatient only with an overnight stay" if meta.get("ip_overnight") else "")
+         + ("; inpatient only with a stay: a row ending after its start day or rows on "
+            "consecutive days" if meta.get("ip_overnight") else "")
          + "), each at the source of "
          "its first day. Medians and percentiles are over persons or episodes at that "
          f"source and only shown where >= {floor} persons stand behind them. Columns are "
@@ -199,7 +201,7 @@ def format_diag(eps: pd.DataFrame, ps: pd.DataFrame, focus: str, vt: pd.DataFram
           "| source | persons | episodes | episodes / person, median | 90th pct | "
           "days between episodes, median | visit days / episode, median | "
           "visit rows / episode, median | episodes with inpatient row | "
-          "of those, no overnight stay |", "|---|" + "--:|" * 9]
+          "of those, no single row spanning a night |", "|---|" + "--:|" * 9]
     for _, r in ps.sort_values("n_eps", ascending=False).iterrows():
         L.append(f"| {r['site']} | {cell(r['n_p'], floor)} | {cell(r['n_eps'], floor)} | "
                  f"{f(r['eps_per_p_med'])} | {f(r['eps_per_p_p90'])} | {f(r['gap_med'])} | "

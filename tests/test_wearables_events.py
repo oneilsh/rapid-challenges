@@ -105,7 +105,8 @@ def test_events_sql_parses():
     assert "{cdr}" not in ctes and " IN (SELECT" not in ctes
     assert "IN (9203, 262, 8870)" in ctes and "IN (9201, 262, 8717)" in ctes
     assert "COUNTIF(new_ep) OVER (PARTITION BY person_id ORDER BY vd)" in ctes
-    assert "NOT @ip_overnight" in ctes and "MAX(e.ip_end) > MIN(e.ip_start)" in ctes
+    assert "NOT @ip_overnight OR LOGICAL_OR(e.ip_stay)" in ctes
+    assert "DATE_DIFF(vd, LAG(vd) OVER w, DAY) = 1" in ctes
 
 
 def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):

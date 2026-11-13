@@ -63,8 +63,9 @@ source, episodes per person, days between episodes, visit days and rows per epis
 same-day inpatient stays; then one focus source (default: most episodes per person)
 against the rest by start year, gap between episodes, visit concept, and the conditions
 and procedures on those visits. Site labels match the run's events report.
-Add `ARGS=--ip-overnight` to any events target to count an episode as inpatient only when
-its inpatient visits span a night (one site codes recurring same-day encounters as 9201).
+Add `ARGS=--ip-overnight` to any events target to count an episode as inpatient only with
+a stay: a visit row ending after its start day, or inpatient rows on consecutive days (one
+site codes recurring same-day encounters as 9201).
 
 In another workspace, run `make setup` and pass `RUNS_DIR=<that workspace's bucket
 mount>` (under `/home/<user>/workspace/`): the default `RUNS_DIR` is the V9 workspace's.

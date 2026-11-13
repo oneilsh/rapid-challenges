@@ -84,9 +84,10 @@ def _ids(ids) -> str:
 def events_ctes(site_table: str | None = None) -> str:
     """Appended to `timing_ctes(...)` (daily summaries only). Extra params: @washout
     INT64 (days between visit starts that still belong to one episode) and @ip_overnight
-    BOOL (an episode is inpatient only if its inpatient rows span at least one night:
-    latest inpatient visit end after earliest inpatient visit start; episodes that are
-    then neither ED nor inpatient drop out of every class).
+    BOOL (an episode is inpatient only if it holds an inpatient STAY day: an inpatient
+    visit row ending after the day it starts, or inpatient rows on two consecutive
+    calendar days, for sites logging one row per hospital day; episodes that are then
+    neither ED nor inpatient drop out of every class).
     `wdays` = (person, Fitbit day); `wp` = cohort persons with Fitbit data; `pids` = a
     per-run rank standing in for person_id; `ev` = (person, disease, first_dx, episode
     start date) with ED / inpatient flags and `site`, the EHR source (`src_id` of
@@ -113,6 +114,16 @@ vis AS (
   FROM `{{cdr}}.visit_occurrence` v
   JOIN vt ON v.visit_concept_id = vt.cid
   JOIN wp ON v.person_id = wp.person_id{site_join}),
+ip_days AS (
+  SELECT person_id, vd, LOGICAL_OR(IFNULL(ved > vd, FALSE)) AS row_night
+  FROM vis WHERE is_ip GROUP BY person_id, vd),
+ip_stay AS (
+  SELECT person_id, vd,
+         row_night
+         OR IFNULL(DATE_DIFF(vd, LAG(vd) OVER w, DAY) = 1, FALSE)
+         OR IFNULL(DATE_DIFF(LEAD(vd) OVER w, vd, DAY) = 1, FALSE) AS stay
+  FROM ip_days
+  WINDOW w AS (PARTITION BY person_id ORDER BY vd)),
 acute AS (SELECT DISTINCT person_id, vd FROM vis),
 acute_new AS (
   SELECT person_id, vd,
@@ -126,16 +137,16 @@ acute_ep AS (
 ev_day AS (
   SELECT x.person_id, x.mondo_id, x.first_dx, v.vd,
          LOGICAL_OR(v.is_ed) AS is_ed, LOGICAL_OR(v.is_ip) AS is_ip,
-         MIN(IF(v.is_ip, v.vd, NULL)) AS ip_start, MAX(IF(v.is_ip, v.ved, NULL)) AS ip_end,
+         LOGICAL_OR(IFNULL(s.stay, FALSE)) AS ip_stay,
          ARRAY_AGG(v.site IGNORE NULLS ORDER BY v.site LIMIT 1)[SAFE_OFFSET(0)] AS site
   FROM dx_all x
   JOIN vis v ON v.person_id = x.person_id
+  LEFT JOIN ip_stay s ON s.person_id = v.person_id AND s.vd = v.vd
   GROUP BY x.person_id, x.mondo_id, x.first_dx, v.vd),
 ev AS (
   SELECT e.person_id, e.mondo_id, e.first_dx, MIN(e.vd) AS vd,
          LOGICAL_OR(e.is_ed) AS is_ed,
-         LOGICAL_OR(e.is_ip) AND (NOT @ip_overnight
-                                  OR IFNULL(MAX(e.ip_end) > MIN(e.ip_start), FALSE)) AS is_ip,
+         LOGICAL_OR(e.is_ip) AND (NOT @ip_overnight OR LOGICAL_OR(e.ip_stay)) AS is_ip,
          ARRAY_AGG(e.site IGNORE NULLS ORDER BY e.vd LIMIT 1)[SAFE_OFFSET(0)] AS site
   FROM ev_day e
   JOIN acute_ep a ON a.person_id = e.person_id AND a.vd = e.vd
@@ -431,8 +442,9 @@ def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: di
           f"than {meta['washout'] + 1} days apart merged, dated by its first day. After / "
           "before = strictly after / before the first diagnosis (the dx day itself is "
           f"excluded). "
-          + ("Inpatient = inpatient visits spanning at least one night (same-day "
-             "inpatient rows dropped). " if meta.get("ip_overnight") else "")
+          + ("Inpatient = an inpatient stay: a visit row ending after the day it starts, "
+             "or inpatient rows on consecutive days (isolated same-day inpatient rows "
+             "dropped). " if meta.get("ip_overnight") else "")
           + f"Covered = >= {mc} Fitbit days in the {lb} days before the event. "
           "Cohort = persons with the disease and any Fitbit day. Columns are nested: check differences before "
           "sharing.", ""]
@@ -541,8 +553,8 @@ def main(argv=None) -> int:
                    help="YYYY-MM-DD: also report a prospective split at this date (e.g. "
                         "the previous CDR's data cutoff)")
     p.add_argument("--ip-overnight", action="store_true",
-                   help="count an episode as inpatient only if its inpatient visits span "
-                        "a night (drops same-day 'inpatient' rows that are not ED)")
+                   help="count an episode as inpatient only with a stay: a row ending after "
+                        "its start day, or inpatient rows on consecutive days")
     p.add_argument("--site-diagnostics", action="store_true",
                    help="also write <run>_site-diag-report.md (see wearables_site_diag)")
     p.add_argument("--focus-site", default="",
