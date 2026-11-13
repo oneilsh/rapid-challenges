@@ -75,4 +75,5 @@ def test_diag_sql_parses():
                  sd.DIAG_CONCEPTS_SELECT.format(cdr="p.ds")):
         sqlglot.parse_one(ctes + body, read="bigquery")
         assert "WITH" not in body
+    assert "WHERE NOT @ip_overnight OR e.has_ed OR e.ip_night" in ctes
     assert "mondo_id = 'ALL'" in ctes and "HAVING COUNT(w.d) >= @min_cov" in ctes

@@ -41,6 +41,7 @@ help:
 	@echo "  make wearables-events-split [AFTER=2023-10-01] - + prospective split at AFTER (V8"
 	@echo "                               cutoff by default; run on V9 to size a V10 holdout)"
 	@echo "  make wearables-events-sites [FOCUS='site 6'] - + EHR source diagnostics report"
+	@echo "      (any events target: ARGS=--ip-overnight counts inpatient only with a night)"
 	@echo "  make plot-wearables-events REPORT=results/wearables-events/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"

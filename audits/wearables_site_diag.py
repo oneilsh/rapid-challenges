@@ -34,7 +34,9 @@ GAP_BINS = (8, 14, 21, 31, 61, 181)   # lower edges, days between consecutive ep
 
 
 def diag_ctes() -> str:
-    """Appended after `events_ctes(site_table)`. Params: @lookback, @min_cov INT64.
+    """Appended after `events_ctes(site_table)`. Params: @lookback, @min_cov INT64 and
+    @ip_overnight BOOL (as in the events audit: keep ED episodes and inpatient ones
+    spanning a night).
     `ep_rows` = acute visit rows with their episode number; `dep` = the pooled cohort's
     covered episodes after the first dx, one row each."""
     return f""",
@@ -47,6 +49,8 @@ ep AS (
   SELECT person_id, ep, MIN(vd) AS start, COUNT(DISTINCT vd) AS n_days,
          COUNT(*) AS n_rows, COUNTIF(is_ip) AS n_ip_rows,
          MAX(IF(is_ip, DATE_DIFF(ved, vd, DAY), NULL)) AS max_ip_los,
+         LOGICAL_OR(is_ed) AS has_ed,
+         IFNULL(MAX(IF(is_ip, ved, NULL)) > MIN(IF(is_ip, vd, NULL)), FALSE) AS ip_night,
          ARRAY_AGG(site IGNORE NULLS ORDER BY vd, site LIMIT 1)[SAFE_OFFSET(0)] AS site
   FROM ep_rows
   GROUP BY person_id, ep),
@@ -58,6 +62,7 @@ dep AS (
                 AND e.start > x.first_dx
   LEFT JOIN wdays w ON w.person_id = e.person_id
     AND w.d >= DATE_SUB(e.start, INTERVAL @lookback DAY) AND w.d < e.start
+  WHERE NOT @ip_overnight OR e.has_ed OR e.ip_night
   GROUP BY e.person_id, e.ep, e.start, e.n_days, e.n_rows, e.n_ip_rows, e.max_ip_los,
            e.site
   HAVING COUNT(w.d) >= @min_cov)
@@ -183,7 +188,9 @@ def format_diag(eps: pd.DataFrame, ps: pd.DataFrame, focus: str, vt: pd.DataFram
          f"`{meta['site_table']}`, labels as in that run's events report", "",
          f"Episodes = the pooled cohort's covered ED / inpatient episodes after the first "
          f"dx (>= {meta['min_cov']} Fitbit days in the {meta['lookback']} days before; "
-         f"visits less than {meta['washout'] + 1} days apart merged), each at the source of "
+         f"visits less than {meta['washout'] + 1} days apart merged"
+         + ("; inpatient only with an overnight stay" if meta.get("ip_overnight") else "")
+         + "), each at the source of "
          "its first day. Medians and percentiles are over persons or episodes at that "
          f"source and only shown where >= {floor} persons stand behind them. Columns are "
          "nested: check differences before sharing.", ""]

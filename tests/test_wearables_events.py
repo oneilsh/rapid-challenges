@@ -105,6 +105,7 @@ def test_events_sql_parses():
     assert "{cdr}" not in ctes and " IN (SELECT" not in ctes
     assert "IN (9203, 262, 8870)" in ctes and "IN (9201, 262, 8717)" in ctes
     assert "COUNTIF(new_ep) OVER (PARTITION BY person_id ORDER BY vd)" in ctes
+    assert "NOT @ip_overnight" in ctes and "MAX(e.ip_end) > MIN(e.ip_start)" in ctes
 
 
 def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
@@ -186,6 +187,7 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     out = out / "ds"
     assert seen["ev"]["lookback"] == ("INT64", 30)
     assert seen["ev"]["washout"] == ("INT64", 7)
+    assert seen["ev"]["ip_overnight"] == ("BOOL", False)
     md = (out / "ai_events-report.md").read_text()
     assert "| MONDO:A | disease A | 30 |" in md
     assert (out / "ai_events-table.tsv").exists() and (out / "ai_visit-types.tsv").exists()
