@@ -59,9 +59,8 @@ persons diagnosed and wearing before AFTER, how many covered episodes fall on or
 (test) versus before (train), plus new persons' episodes. Run on V9 with the V8 cutoff
 (the default) to see what one release adds, a stand-in for a V10 holdout.
 
-In a new workspace (e.g. a Controlled Tier one), run `make setup` and pass
-`RUNS_DIR=/home/jupyter/workspace/<that workspace's bucket mount>`: the default `RUNS_DIR`
-is the original workspace's mount.
+In another workspace, run `make setup` and pass `RUNS_DIR=<that workspace's bucket
+mount>` (under `/home/<user>/workspace/`): the default `RUNS_DIR` is the V9 workspace's.
 
 wearables-timing writes one flat folder per CDR, every file named after the run:
 
@@ -77,9 +76,10 @@ wearables-timing/R2024Q3R8/
 
 Outputs go to `$(RUNS_DIR)/<audit>/<CDR dataset>/` (e.g. `…/wearables-rare/R2024Q3R8/`),
 outside the repo, so runs on different CDR releases don't overwrite each other. The default `RUNS_DIR` is the
-bucket-backed workspace mount
-`/home/jupyter/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy`,
-so results survive VM deletion. Override with `RUNS_DIR=...`.
+bucket-backed mount of the V9 workspace,
+`/home/dataproc/workspace/dataproc-staging-bayesian-phenotyping-for-rare-disease-v9/rapid`,
+so results survive VM deletion. (The earlier V8 workspace used
+`/home/jupyter/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy`.) Override with `RUNS_DIR=...`.
 
 ## Egress
 

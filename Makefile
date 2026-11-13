@@ -4,7 +4,8 @@ REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
 # Audit outputs go outside the repo tree, to the bucket-backed workspace mount (survives
 # VM deletion); override with RUNS_DIR=... .
-RUNS_DIR      ?= /home/jupyter/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy
+RUNS_DIR      ?= /home/dataproc/workspace/dataproc-staging-bayesian-phenotyping-for-rare-disease-v9/rapid
+# (the earlier V8 workspace used /home/jupyter/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy)
 MONDO_CACHE   ?= $(REPO_ROOT)/data/mondo
 # Optional manual CDR override for setup (an external read-only project that
 # `wb resource list` doesn't surface). Persists in .workspace_env afterwards.
