@@ -1,11 +1,12 @@
-# Wearables for Rare Autoimmune Disease: Predicting Acute Care Episodes
+# AoU Wearables - Diagnostic inference
 
-*Draft challenge description. Cohort and outcome counts are from the All of Us v8 CDR
-(R2024Q3R8), masked to All of Us egress rules (1–19 shown as `<20`); V9 counts are
-pending. Source runs: `results/wearables-timing/` and `results/wearables-events/`.
-Numbered references are listed at the end.*
+**Developers/Writers of the Challenge:** Shawn O'Neil, Tony Patelunas
 
-## **Purpose and Scope**
+*Repo copy of the challenge description, kept in sync with the shared Google Doc. Counts
+are from the All of Us V9 Controlled Tier CDR (C2025Q4R6), masked to All of Us egress
+rules; source runs are in `results/wearables-events/` (2026-11-13, inpatient-stay rule).*
+
+## Purpose and Scope
 
 *Define the rare disease problem, target population or use context, intended users, boundaries of the challenge, and the decision or capability the challenge is intended to improve.*
 
@@ -17,46 +18,45 @@ patients with rare systemic autoimmune disease.
   erythematosus (SLE) and myasthenia gravis follow a relapsing course. Flares, infections
   under immunosuppression and crises frequently end in an emergency department (ED) visit
   or hospital admission. Between clinic visits, care teams have little visibility into
-  how a patient is doing, and the EHR typically records a deterioration only once the
-  patient has already arrived for acute care.
+  how a patient is doing, and flares or other complications are difficult to predict or
+  prevent.
 * **Need:** A signal between visits that changes before an acute episode, early enough
-  that it could support a phone call, an earlier appointment or a medication review.
-  Consumer wearables record heart rate, activity and sleep continuously, but whether
-  these data carry useful early warning in rare autoimmune disease has not been tested
-  at any meaningful scale.
+  that it could support proactive care. Consumer wearables record heart rate, activity
+  and sleep continuously, but whether these data carry useful early warning in rare
+  autoimmune disease has not been tested at any meaningful scale.
 * **Opportunity:** All of Us links wearables data to EHR records for tens of thousands of
   participants: Fitbit data for more than 68,000 participants in V9, and Apple HealthKit
   data released alongside V9 as a separate dataset [1, 2]. To our knowledge this
   includes the largest wearables-linked cohort of rare autoimmune patients available to
-  researchers. Early access to the unreleased V10 data makes a prospective holdout
-  possible: models are frozen on V9 and scored on follow-up time that no participant has
-  seen.
+  researchers. Timing the challenge with the upcoming V10 release (expected mid-2027)
+  makes a prospective holdout on unseen data for evaluation possible.
 * **Target population:** All of Us participants with a rare autoimmune diagnosis and
   wearables data. We define rare autoimmune diseases as those in the Mondo autoimmune
-  disease subtree tagged rare by Orphanet, GARD, NORD or Mondo, each mapped to the EHR
-  through its own SNOMED concept. In v8, 17,127 participants carry one of these
-  diagnoses and 1,808 of them have Fitbit data, including 712 with Sjögren syndrome, 444
-  with SLE and 117 with myasthenia gravis.
+  disease subtree tagged rare by Orphanet, GARD, NORD or Mondo, each mapped to the OMOP
+  EHR data through SNOMED mappings. In V9, 23,481 participants carry one of these
+  diagnoses and 2,838 of them have Fitbit data, including 993 with Sjögren syndrome, 645
+  with SLE and 169 with myasthenia gravis.
 * **Expected outputs:** Models that, on any day with recent wearables data, estimate the
-  probability that an ED or inpatient episode begins in the next 30 days. Every model
-  uses wearables data; teams may add EHR and survey data, genomic data, or both. Each
-  submission consists of code and a trained model run through an organizer-provided
-  harness, plus a short report. All modeling happens inside the All of Us Researcher
-  Workbench, and no participant-level data leaves it.
-* **Users:** Researchers developing digital biomarkers and multimodal risk models for
-  rare disease; developers of wearable and remote monitoring tools; clinical teams and
-  remote monitoring programs evaluating whether such tools are worth pursuing; and the
-  RAPID program, which gains a reusable benchmark.
+  probability that an ED or inpatient episode begins in the next 30 days. All challenge
+  models will require the use of wearables data, and teams may add EHR and survey data,
+  genomic data, or both, according to their interest and skillset. All modeling and
+  evaluation will happen inside the All of Us Researcher Workbench, and no
+  participant-level data will be exportable; model exports will be restricted until
+  deemed free of potentially re-identifying information.
+* **Users:** Initial users will be researchers developing digital biomarkers and
+  multimodal risk models for rare disease, and developers of wearable and remote
+  monitoring tools. In later translational work, clinical teams and remote monitoring
+  programs may use challenge results to evaluate whether such tools are worth pursuing.
+  Finally, the RAPID program itself, which will gain a reusable benchmark.
 * **Boundaries:** The challenge evaluates retrospective and prospective-holdout
   prediction, not a deployed alerting system, and prediction begins after diagnosis
   rather than aiming to diagnose. Wearables data are limited to what All of Us already
-  holds. Wearables are required in every submission; EHR and survey data and genomic
-  data are optional. All work stays within All of Us data use and egress rules.
+  holds. All work stays within All of Us data use and egress rules.
 * **Capability improved:** Methods and evidence for risk stratification between visits
   in rare autoimmune disease, along with a direct measure of what each data type
   contributes: wearables on their own, and the gain from adding EHR or genomic data.
 
-## **Scientific and Technical Rationale**
+## Scientific and Technical Rationale
 
 *Explain why the problem is important now, the current state-of-the-art gap, relevant baselines, and why a challenge is an appropriate mechanism for accelerating progress.*
 
@@ -66,74 +66,73 @@ patients with rare systemic autoimmune disease.
   shift ahead of influenza-like illness [3] and COVID-19 [4], and that adding wearables
   to EHR data improves prediction of several chronic conditions in All of Us [5]. We
   hypothesize that autoimmune flares and infections under immunosuppression, which share
-  much of the same systemic inflammatory response, leave similar traces.
+  much of the same systemic inflammatory response, provide similar signal.
 * **Gap:** Wearable studies in autoimmune disease have mostly been small, single-site,
   and focused on common conditions such as rheumatoid arthritis and inflammatory bowel
   disease, and large-scale wearables-plus-EHR work has targeted common diseases rather
   than acute events in rare ones [5]. Several key challenges remain for rare autoimmune
   disease: there is no shared benchmark or agreed outcome definition, small cohorts make
   overfitting easy and method comparison difficult, and no evaluation separates the
-  value of wearables from that of the EHR history that accompanies them.
-* **Feasibility (V9):** Among 2,838 rare autoimmune patients with Fitbit data, 2,244
-  ED visits or inpatient stays after diagnosis are preceded by at least 14 days of Fitbit
-  data in the prior 30 days. These occur in 789 participants, 405 of whom have two or
-  more. The rate works out to about 1.2 episodes per 1,000 days of wear, or roughly a 3%
-  chance of an episode in any 30-day window. Sjögren syndrome contributes 700 such
-  episodes (260 participants), SLE 620 (190) and myasthenia gravis 234 (61). ED visits
-  alone account for 1,615 (639 participants). Most episodes, however, have no wearables
-  data at all in the month before them (72%); usable data depends on when patients wear
-  their devices, not on how strict the coverage threshold is.
-* **Prospective holdout size:** Splitting V9 at the V8 data cutoff stands in for the
-  V10 holdout. In the 14 months after that date, participants already diagnosed and
-  wearing a Fitbit had 538 covered episodes (307 participants), and newly enrolled or
-  newly wearing participants added 28 more. If V10 adds a similar span of follow-up, we
-  expect a holdout of roughly 500 episodes in roughly 300 participants.
-* **Baselines:** Baselines are reference points, not competitors, and we intend them to
-  be quick first-pass efforts rather than tuned models:
+  value of wearables from that of the EHR history or genomic information that may
+  accompany them.
+* **Feasibility (V9):** Among rare autoimmune patients with Fitbit data, 2,244 ED visits
+  or inpatient stays after diagnosis are preceded by at least 14 days of Fitbit data in
+  the prior 30 days. These occur in 789 participants, 405 of whom have two or more. The
+  rate works out to about 1.2 episodes per 1,000 days of wear, or roughly a 3% chance of
+  an episode in any 30-day window. Sjögren syndrome contributes 700 such episodes (260
+  participants), SLE 620 (190) and myasthenia gravis 234 (61); ED visits alone account
+  for 1,615 (639 participants). Most episodes, however, have no wearables data at all in
+  the month before them (72%).
+* **Prospective holdout size:** Splitting V9 at the V8 data cutoff stands in for the V10
+  holdout. In the 14 months after that date, participants already diagnosed and wearing
+  a Fitbit had 538 covered episodes (307 participants), and newly enrolled or newly
+  wearing participants added 28 more. If V10 adds a similar span of follow-up, we expect
+  a holdout of roughly 500 episodes in roughly 300 participants.
+* **Baselines:** Minimal baseline models will provide a lower performance floor, as well
+  as demonstrations of submission and evaluation harnesses.
   * **Personal-baseline heuristic (wearables only):** for each prediction date, the
     change in the past week's resting heart rate (or median daytime heart rate where
     resting heart rate is unavailable) and daily steps relative to the person's own
-    previous two months. It needs no training and sets the floor every wearables-only
-    model must clear.
-  * **EHR-only:** regularized logistic regression on prior utilization (counts of past ED
-    and inpatient episodes and outpatient visits), age and sex. Prior utilization is
-    usually the strongest single predictor of future utilization, so even this simple
-    model should be hard to beat by much.
-  * **Genomic:** whether a germline genome adds anything here is an open question.
-    Because it is fixed for life, it can shift baseline risk (e.g., HLA type, autoimmune
-    polygenic risk, drug metabolism variants) but not timing. We expect a small gain at
-    most, and the challenge is designed to measure it rather than assume it.
-* **Why a challenge:** Only an organizer can hold the prospective V10 holdout. Methods
-  for sparse, irregular, multimodal time series are evolving quickly, including
-  time-series foundation models and self-supervised pretraining on wearables, and a
-  common task with blinded scoring is the most direct way to compare them fairly. Teams
-  may also train on the tens of thousands of wearables users without these diagnoses and
-  be evaluated on the rare cohort, which rewards methods that transfer from common to
-  rare data. Community challenges with blinded evaluation have a strong track record in
-  biomedicine: the DREAM Challenges, running since 2006, have posed dozens of
-  prediction problems on held-out clinical and molecular data [6], and the Critical
-  Assessment of Genome Interpretation (CAGI) has run 50 blinded challenges predicting
-  phenotypes from genetic variants, scored by independent assessors [7].
+    previous two months can serve as a minimal predictive signal.
+  * **Wearables + EHR + surveys:** Baseline models utilizing both wearables and EHR data
+    will combine wearables-only heuristic metrics as well as EHR signals such as age,
+    sex, and prior utilization (counts of past ED and inpatient episodes and outpatient
+    visits) in basic regularized logistic regression.
+  * **Wearables + Genomic:** whether a germline genome adds anything here is an open
+    question. Because it is fixed for life, it can shift baseline risk (e.g., HLA type,
+    autoimmune polygenic risk, drug metabolism variants) but not timing. We expect a
+    small gain at most, and the challenge is designed to measure it rather than assume
+    it.
+* **Why a challenge:** Methods for sparse, irregular, multimodal time series are
+  evolving quickly, including time-series foundation models and self-supervised
+  pretraining on wearables, and a common task with blinded scoring is the most direct
+  way to compare them fairly. Teams may also train on the tens of thousands of wearables
+  users without these diagnoses and be evaluated on the rare cohort, which rewards
+  methods that transfer from common to rare data. Community challenges with blinded
+  evaluation have a strong track record in biomedicine: the DREAM Challenges, running
+  since 2006, have posed dozens of prediction problems on held-out clinical and
+  molecular data [6], and the Critical Assessment of Genome Interpretation (CAGI) has
+  run 50 blinded challenges predicting phenotypes from genetic variants, scored by
+  independent assessors [7].
 
-## **Objectives and Intended Impact**
+## Objectives and Intended Impact
 
 *Specify the capabilities or innovations to be stimulated or measured and the expected value to patients, caregivers, providers, researchers, developers, or health systems.*
 
 **Objectives**
 
-* Predict the start of an ED or inpatient episode in the next 30 days from preceding
-  wearables data, with or without EHR and survey data and genomic data, in rare
-  autoimmune patients.
+* Predict the occurrence of an ED or inpatient episode in the next 30 days from
+  preceding wearables data, with or without EHR and survey data and genomic data, in
+  rare autoimmune patients.
 * Measure what each data type contributes: wearables alone, and the gain from adding EHR
-  and survey data or genomic data, overall and per disease.
+  and survey data or genomic data, overall and per rare autoimmune disease.
 * Encourage methods that learn from the large general wearables population and transfer
   to small rare disease cohorts.
 
 **Impact**
 
-The challenge itself produces methods, a benchmark and evidence, not changes in care.
-The impacts below depend on later validation and deployment work that the challenge is
-meant to inform.
+The challenge itself produces methods, a benchmark and evidence. The impacts below
+depend on later validation and deployment work that the challenge is meant to inform.
 
 * **Patients and caregivers:** If wearables prove informative, they could eventually
   support earlier contact before a flare or infection becomes an admission, using
@@ -149,28 +148,24 @@ meant to inform.
   investment for high-cost rare disease populations, before committing to deployment
   studies.
 
-## **Challenge Structure**
+## Challenge Structure
 
 *Recommend the competition format, phases, timeline, participant tasks, expected submissions, eligibility, team rules, judging, and any progression or down-selection process.*
 
-* **Format:** A challenge run on the All of Us Researcher Workbench, with one task, one
-  evaluation set and one leaderboard.
+* **Format:** A challenge run on the All of Us Researcher Workbench:
   * **Wearables required:** Every submission uses wearables data.
   * **Data combinations:** Each entry declares one of four combinations: wearables only;
     wearables + EHR and survey data (treated as one data type); wearables + genomic data;
     or wearables + EHR and survey + genomic data. Teams may enter one or several. All
     entries are scored on the same participants and prediction dates, and the leaderboard
     lists each entry's combination.
-  * **Enforcing declarations:** At scoring time the harness gives each entry only the
-    input data for its declared combination, for example through a separate evaluation
-    workspace or input set per combination (Controlled Tier for those with genomic
-    data). Teams develop on V9 however they like, but a model scored as wearables-only
-    never sees EHR or genomic inputs, and no team touches V10 directly.
-* **Organizer-prepared data:** To avoid misunderstandings about the outcome and leakage
-  of future information, we prepare the cohort, the prediction dates, the outcome labels
-  for training data, and the input data available as of each prediction date. Teams are
-  free to engineer their own features from these inputs, but the harness controls what
-  data a model can see.
+  * **Enforcing declarations:** At scoring time an evaluation harness will give each
+    entry only the input data for its declared combination, for example through a
+    separate evaluation workspace or input set per combination (Controlled Tier for those
+    with genomic data). No team can access V10 evaluation data during model development.
+  * **Organizer-prepared data:** To avoid misunderstandings about the outcome and leakage
+    of future information, challenge organizers will prepare the cohorts, the prediction
+    dates, and the outcome labels for training data.
 * **Participant task:** For each prediction date, defined as a day with at least 14 days
   of wearables data in the prior 30, teams output the probability that an ED or
   inpatient episode starts within the next 30 days, using only data dated before the
@@ -180,23 +175,24 @@ meant to inform.
   same-day encounters as inpatient visits, and without this rule one site supplied
   nearly half of all episodes.
 * **Phases and timeline (proposed):**
-  * **Phase 0, preparation (about 2 months):** We finalize cohort and outcome
-    definitions on V9, prepare the input data, build the baselines and the submission
-    harness, and test scoring end to end.
-  * **Phase 1, open development (about 3 months):** Teams develop on V9 against a
-    person-level validation split, with a leaderboard masked to egress rules.
-  * **Phase 2, blinded evaluation (about 1 month):** We run frozen submissions on the V10
-    holdout, which covers new follow-up time after the V9 cutoff for existing
+  * **Phase 0, preparation (about 2 months):** Challenge organizers finalize cohort and
+    outcome definitions on V9, prepare the input data, build the baselines and the
+    submission harness, and test scoring end to end.
+  * **Phase 1, open development (about 3 months):** Teams develop on V9 training data.
+  * **Phase 2, blinded evaluation (about 1 month):** Organizers run frozen submissions on
+    the V10 holdout, which covers new follow-up time after the V9 cutoff for existing
     participants as well as participants new to V10.
   * **Phase 3, analysis and reporting (about 2 months):** Stratified results, review of
     team reports, and winners' write-ups.
-* **Expected submissions:**
+* **Expected submissions:** As described above, teams may submit one or more models
+  utilizing different data combinations (wearables, EHR and survey, and genomic data).
+  For each submission:
   * **Code and model:** a container image with the team's code, which prepares features
-    from the organizer-provided inputs, plus a trained model, run through the harness.
-    The harness will likely be built on the Workbench's workflow tools (Cromwell/WDL,
-    dsub and Nextflow are supported, each running steps in container images [8]); the
-    exact mechanism, including which image registries are allowed, will be settled in
-    Phase 0.
+    from the declared All of Us data inputs, plus a trained model, run through the
+    harness. The harness will likely be built on the Workbench's workflow tools
+    (Cromwell/WDL, dsub and Nextflow are supported, each running steps in container
+    images [8]); the exact mechanism, including which image registries are allowed, will
+    be settled in Phase 0.
   * **Declaration** of the data types used.
   * **Report:** a short methods report (no more than 4 pages) describing the approach,
     the data types used and why, and an analysis of failure cases. The required
@@ -204,43 +200,37 @@ meant to inform.
 * **Eligibility:** Researchers with All of Us Registered Tier access, which requires an
   institutional data use agreement and completed training and covers the wearables, EHR
   and survey data. Using genomic data additionally requires Controlled Tier access.
-  Teams from ineligible institutions may participate through an eligible member.
-* **Team rules:** Teams of up to 5, with one team per person. Leaderboard submissions are
-  limited in Phase 1, and final code must reproduce the submitted predictions.
-* **Judging and prizes:** The primary metric determines the leaderboard. Prizes go to
-  absolute scores within each declared combination, never to the difference between a
-  team's entries, which a team could inflate with a deliberately weak wearables-only
-  entry:
+  Teams from ineligible institutions may participate through an eligible member,
+  provided they follow all All of Us data use and results export policies.
+* **Team rules:** Teams of up to 5, with one team per person.
+* **Judging and prizes:** Prizes go to the best absolute scores within each declared
+  combination:
   * **Best wearables-only**, **best wearables + EHR and survey**, **best wearables +
     genomic** and **best wearables + EHR and survey + genomic:** the highest primary
     score among entries declaring that combination.
   * A combination requires at least 3 eligible entries to be awarded. We announce this at
     launch, so an unpopular combination simply goes unawarded.
-  * An overall prize across combinations is optional; it would most likely go to an
-    entry that also wins its combination.
   * A panel of clinicians (rheumatology, neurology) and data scientists reviews the top
     submissions' reports. The panel can disqualify a submission but does not reorder
     rankings.
-* **Down-selection:** Teams whose submission beats the personal-baseline heuristic on the
-  Phase 1 validation split advance to Phase 2. This serves as a quality
-  gate only, with no cap on the number of teams.
 
-## **Evaluation Framework**
+## Evaluation Framework
 
 *Define primary and secondary metrics, evaluation datasets, statistical methods, qualitative review where needed, success thresholds, tie-breaking, and requirements for robustness, calibration, generalizability, reproducibility, interpretability, fairness, and failure analysis.*
 
-Only the primary metric decides rankings and prizes. Everything else is computed by the
-organizers from the submitted predictions and reported alongside the rankings, so it adds
-no work for teams.
+Only the primary metric, AUPRC as described below, will decide rankings and prizes.
+Everything else is computed by the organizers from the submitted predictions and
+reported alongside the rankings, so it adds no work for teams but provides additional
+valuable information on challenge results.
 
 * **Evaluation datasets:**
   * **Primary:** the V10 prospective holdout (prediction dates after the V9 data cutoff).
-  * **Secondary:** a held-out person-level split of V9.
   * **Evaluation unit:** person-days, with every eligible prediction date scored.
 * **Primary metric:** Area under the precision-recall curve (AUPRC) for the pooled rare
   autoimmune cohort, which suits a positive rate of roughly 3% per 30-day window.
-* **Value of each data type:** Reported, not scored, so there is nothing to gain by
-  gaming it.
+* **Value of each data type:** The allowed combinations of data modalities provide a
+  unique opportunity to assess the relative value of additional data modalities beyond
+  wearables:
   * **Across the field:** the best score among entries using a data type against the best
     score among entries without it (e.g., the best wearables + EHR entry against the best
     wearables-only entry), compared by paired bootstrap. Because these are each group's
@@ -250,51 +240,34 @@ no work for teams.
     between their own entries (e.g., their wearables + EHR entry against their
     wearables-only entry), summarized across teams. This shows how consistently added
     data helps, as context for the field-level result.
-  * **Wearables over the EHR:** the best entries using EHR and survey data against the
-    organizers' EHR-only baseline on the same prediction dates. Because this baseline is
-    deliberately simple, we treat this comparison as a reference point and not as a
-    precise estimate of what wearables add.
-* **Statistical methods:** Confidence intervals come from bootstrap resampling of
-  participants rather than person-days (1,000 resamples), so that repeat episodes from a
-  single person do not inflate certainty. To avoid chains of overlapping intervals
-  merging every team into one group, each team is compared with the top-scoring team by
-  paired bootstrap; teams whose difference from the leader is not significant share
-  first place, and the remaining teams are ranked by point estimate.
-* **Success thresholds:**
-  * Every submission must beat the personal-baseline heuristic.
-  * We consider a data type to add value if the lower 95% bound of the field-level
-    difference described above is above 0.
+* **Statistical methods:** 95% confidence intervals for AUPRC will come from bootstrap
+  resampling of participants rather than person-days (1,000 resamples), so that repeat
+  episodes from a single person do not inflate certainty. Each team is compared with the
+  top-scoring team by paired bootstrap; teams whose difference from the leader is not
+  significant share first place, and the remaining teams are ranked by point estimate.
 * **Tie-breaking:** Better calibration (lower Brier score), then earlier final
   submission.
-* **Calibration:** Brier score, calibration slope and intercept, and reliability curves
-  for every submission. Calibration serves as the first tie-breaker, and poorly
-  calibrated models are flagged in the results.
+* **Calibration:** Brier score for every submission.
 * **Site heterogeneity:** All of Us EHR data come from many health care provider
   organizations, each recorded as an obfuscated source code (`src_id`), and coding and
-  utilization practices differ between them. For each submission we report AUPRC by
-  site group on the V10 holdout, along with a summary of the spread (e.g., the range and
-  the lowest-scoring group). Because rare disease patients with wearables data are spread
-  thinly across sites, sites will be pooled into groups large enough to report. This is
-  scored and reported but not prized; a held-out-site evaluation is not feasible, since
-  teams see every site in V9.
+  utilization practices differ between them. For each submission we will report the
+  spread and variance of AUPRC across sites. This is scored and reported but not prized;
+  a held-out-site evaluation is not feasible, since teams see every site in V9 and
+  per-site counts of rare autoimmune disease are likely to be small.
 * **Robustness:** Results per named disease (Sjögren syndrome, SLE, myasthenia gravis)
   where counts allow, and by amount of recent wear (14–20 vs 21 or more days in the
   30-day window).
 * **Subgroups:** AUPRC and calibration by sex, age band, and race and ethnicity, wherever
-  each subgroup has at least 20 participants. All of Us data, although extensive, are not
-  a random sample, and wearables data come from participants who chose to share their
-  own devices (or joined a device study); the results therefore also describe who in the
-  cohort has wearables data at all.
-* **Reproducibility:** We rerun final submissions through the harness with fixed seeds,
-  and predictions must match the submitted ones within tolerance.
+  each subgroup has at least 20 participants.
 * **Interpretability and failure analysis:** Covered in each team's report, reviewed
-  qualitatively by the panel for clinical plausibility. Any analysis of missed episodes
-  or false alarms uses aggregate, masked summaries.
+  qualitatively by the panel for clinical plausibility.
 * **Data protection:** All metrics are computed inside the Workbench. Only aggregate
   results leave it, with counts from 1 to 19 masked and no statistic derived from a
-  masked count.
+  masked count. It is possible that some models themselves may be exportable, but
+  challenge organizers will take care to evaluate the potential for re-identification
+  risk.
 
-## **Open items before launch**
+## Open Items and Risks
 
 * **Label quality:** Diagnosis counts look high relative to known prevalence (e.g.,
   Sjögren syndrome in 5,474 v8 participants). This may reflect enrollment that
@@ -306,24 +279,21 @@ no work for teams.
   longer holds in V9). We propose keeping it in the pooled cohort only, not as a named
   sub-cohort.
 * **Outcome coding across sites:** Visit types are coded differently across EHR sites.
-  The inpatient-stay rule above removes the worst case, but one site still records stays
-  as runs of same-day inpatient visits, and another has many repeat ED visits in a few
+  The inpatient-stay rule removes the worst case, but one site still records stays as
+  runs of same-day inpatient visits, and another has many repeat ED visits in a few
   participants (254 episodes in 26). We need to decide whether to keep ED and inpatient
   together or use ED visits alone (1,615 covered episodes; a holdout of roughly 400), and
   whether to limit how much any one participant can weigh in scoring.
-* **V10 and HealthKit:** The counts above are from the V9 Controlled Tier CDR and
-  Fitbit only. We still need to check how much Apple HealthKit data the cohort has, and
-  confirm the timing, follow-up span and access terms for V10.
+* **V10 and HealthKit:** The counts above are from the V9 Controlled Tier CDR and Fitbit
+  only. We still need to check how much Apple HealthKit data the cohort has, and confirm
+  the timing, follow-up span and access terms for V10. If V10 adds less follow-up than
+  expected, a fallback is to split V9 into training and held-out evaluation data using
+  workspace data access controls, which needs to be tested on the platform.
 * **Genomic overlap:** We have not yet checked how many cohort participants, or how many
-  with covered episodes, also have whole-genome data. If coverage is partial, we need to
-  decide whether genomic entries are scored on the full cohort (allowing missing genomes)
-  or on the genome subset.
+  with wearables-covered ED or inpatient episodes, also have whole-genome data. It is
+  possible that genomics data use is not feasible.
 * **Harness:** Choose the workflow mechanism and allowed image registries, how inputs are
   truncated at each prediction date, and how compute is provided and limited.
-* **Site groups:** The cohort spans 55 EHR sources (`src_id`), of which 12 have at
-  least 20 participants with a covered episode. We need to choose site groups large
-  enough to report. Participants seen at more than one site need a rule (e.g.,
-  assignment to the site holding most of their visits).
 * **Evaluation workspaces:** Confirm that the Workbench can provide per-combination
   workspaces or input sets for scoring, including a Controlled Tier one for genomic
   entries.
@@ -331,7 +301,7 @@ no work for teams.
 * **Visit types:** Decide whether observation stays (visit concept 581385) count as acute
   episodes.
 
-## **References**
+## References
 
 1. All of Us Research Program. Our Largest Genomic Dataset: Curated Data Repository
    version 9 (support article, including the Apple HealthKit release).
