@@ -29,13 +29,29 @@ Per (disease, class), over the cohort:
                     covered events before dx / persons with one
 plus the visit types present for the cohort, and covered-ness of the pooled events.
 
+SPLIT (--after DATE, e.g. the previous CDR's data cutoff): how much a later release
+would add as a prospective test set. Persons are KNOWN when diagnosed and wearing a
+Fitbit before DATE (they and their history would be in the earlier release), NEW
+otherwise. Test episodes start on or after DATE (and after dx); training episodes start
+after dx and before DATE. Per disease (ed_or_inpatient) and pooled (each class):
+  n_known / n_known_post     known persons / those with Fitbit days on or after DATE
+  wd_post                    known persons' Fitbit days on or after DATE
+  n_train / n_train_p        covered training episodes of known persons / persons
+  n_test / n_test_p          covered test episodes of known persons / persons
+  n_new / n_new_test(_p)     new persons with Fitbit days after dx on or after DATE /
+                             their covered test episodes / persons with one
+"Known" is a date-based stand-in for "in the earlier release": late-arriving EHR records
+and Fitbit history synced after DATE make it overcount a little; test episodes (dated
+on or after DATE) are unaffected.
+
 EGRESS: every count through `cell`; the rate only where the count behind it is >= 20.
 Columns are nested (n_ev >= n_cov, ed_or_inpatient >= each class): check differences
 before sharing beyond the Workbench team. Person ids stay in BigQuery: rows come back
 keyed by a per-run rank, and nothing person-level is written.
 
 OUTPUT: `<out-dir>/<CDR dataset>/<run>_events-report.md`, `_events-table.tsv`,
-`_visit-types.tsv`, `_events-run.json`, `_events-plot-*.png` (from the masked report).
+`_visit-types.tsv`, `_events-run.json`, `_events-plot-*.png` (from the masked report),
+and with --after, `_split-table.tsv`.
 """
 from __future__ import annotations
 
@@ -129,6 +145,30 @@ JOIN pids p ON p.person_id = e.person_id
 LEFT JOIN wdays w ON w.person_id = e.person_id
   AND w.d >= DATE_SUB(e.vd, INTERVAL @lookback DAY) AND w.d < e.vd
 GROUP BY p.pid, e.mondo_id, e.vd, e.first_dx, e.is_ed, e.is_ip, e.site
+"""
+
+# EVENTS_SELECT plus each episode's and first dx's day offset from @split DATE.
+SPLIT_EVENTS_SELECT = EVENTS_SELECT.replace(
+    "e.site, COUNT(w.d) AS cov_days",
+    "e.site, COUNT(w.d) AS cov_days,\n"
+    "       DATE_DIFF(e.vd, @split, DAY) AS split_day,\n"
+    "       DATE_DIFF(e.first_dx, @split, DAY) AS dx_split_day", 1)
+
+# One row per (person, disease): Fitbit days before @split, and after both dx and @split.
+SPLIT_EXPOSURE_SELECT = """
+SELECT p.pid, x.mondo_id, DATE_DIFF(x.first_dx, @split, DAY) AS dx_split_day,
+       COUNTIF(w.d < @split) AS wd_pre,
+       COUNTIF(w.d >= @split AND w.d > x.first_dx) AS wd_post
+FROM dx_all x
+JOIN wdays w ON w.person_id = x.person_id
+JOIN pids p ON p.person_id = x.person_id
+GROUP BY p.pid, x.mondo_id, x.first_dx
+"""
+
+# Days from @split to the cohort's last Fitbit day and last ED / inpatient visit start.
+SPLIT_SPAN_SELECT = """
+SELECT DATE_DIFF((SELECT MAX(d) FROM wdays), @split, DAY) AS wear_days_span,
+       DATE_DIFF((SELECT MAX(vd) FROM vis), @split, DAY) AS visit_days_span
 """
 
 # Tables carrying an EHR source column (All of Us `*_ext` tables, `src_id`).
@@ -246,6 +286,95 @@ def site_summary(ev: pd.DataFrame, psite: pd.DataFrame, expo: pd.DataFrame, *,
     return out.drop(columns="src_id")
 
 
+def split_summary(sev: pd.DataFrame, sexpo: pd.DataFrame, n_dx: pd.DataFrame, *,
+                  min_cov: int, floor: int = EGRESS_FLOOR) -> pd.DataFrame:
+    """Raw per-(disease, class) split counts (see SPLIT in the module docstring) from
+    SPLIT_EVENTS_SELECT / SPLIT_EXPOSURE_SELECT rows. ALL first, then `n_dx` order."""
+    order = [ALL] + [m for m in n_dx["mondo_id"] if m != ALL]
+    rows = []
+    for m in order:
+        x = sexpo[sexpo["mondo_id"] == m]
+        known = x[(x["dx_split_day"] < 0) & (x["wd_pre"] > 0)]
+        new = x[~x["pid"].isin(known["pid"]) & (x["wd_post"] > 0)]
+        e_m = sev[(sev["mondo_id"] == m) & (sev["rel_day"] > 0) & (sev["cov_days"] >= min_cov)]
+        for cls in CLASSES:
+            e = e_m[event_class_mask(e_m, cls)]
+            ek = e[e["pid"].isin(known["pid"])]
+            train, test = ek[ek["split_day"] < 0], ek[ek["split_day"] >= 0]
+            en = e[e["pid"].isin(new["pid"]) & (e["split_day"] >= 0)]
+            wdp = int(known["wd_post"].sum())
+            rows.append({
+                "mondo_id": m, "event_class": cls, "n_known": len(known),
+                "n_known_post": int((known["wd_post"] > 0).sum()), "wd_post": wdp,
+                "n_train": len(train), "n_train_p": int(train["pid"].nunique()),
+                "n_test": len(test), "n_test_p": int(test["pid"].nunique()),
+                "test_per_1k": (round(1000 * len(test) / wdp, 2)
+                                if len(test) >= floor and wdp else None),
+                "n_new": len(new), "n_new_test": len(en),
+                "n_new_test_p": int(en["pid"].nunique())})
+    return pd.DataFrame(rows)
+
+
+SPLIT_COUNT_COLS = ["n_known", "n_known_post", "n_train", "n_train_p", "n_test", "n_test_p",
+                    "n_new", "n_new_test", "n_new_test_p"]
+
+
+def masked_split_table(split: pd.DataFrame, names: dict,
+                       floor: int = EGRESS_FLOOR) -> pd.DataFrame:
+    out = mask_counts(split, SPLIT_COUNT_COLS, floor)
+    out["test_per_1k"] = split["test_per_1k"].map(
+        lambda v: "" if v is None or pd.isna(v) else f"{v:.2f}")
+    out.insert(1, "name", out["mondo_id"].map(
+        lambda m: "all selected diseases" if m == ALL else names.get(m, m)))
+    return out
+
+
+SPLIT_HEAD = ("known persons | still wearing after split | covered train episodes | persons | "
+              "covered test episodes | persons | test per 1k wear-days | new persons | "
+              "their covered test episodes | persons |")
+
+
+def _split_row(r, floor) -> str:
+    rate = "—" if r["test_per_1k"] is None or pd.isna(r["test_per_1k"]) else f"{r['test_per_1k']:.2f}"
+    return " | ".join([cell(r["n_known"], floor), cell(r["n_known_post"], floor),
+                       cell(r["n_train"], floor), cell(r["n_train_p"], floor),
+                       cell(r["n_test"], floor), cell(r["n_test_p"], floor), rate,
+                       cell(r["n_new"], floor), cell(r["n_new_test"], floor),
+                       cell(r["n_new_test_p"], floor)]) + " |"
+
+
+def format_split(split: pd.DataFrame, names: dict, meta: dict, *,
+                 floor: int = EGRESS_FLOOR) -> list[str]:
+    """Report lines for the --after section. Tables start with 'split class' / 'split
+    Mondo' so the events plots ignore them."""
+    d = meta["after"]
+    span = meta.get("split_span") or {}
+    months = lambda v: "?" if v is None else f"{v / 30.44:.1f}"
+    L = [f"## Prospective split at {d}", "",
+         f"Known = diagnosed and with a Fitbit day before {d} (would be in a release cut "
+         f"then); new = everyone else in the cohort with Fitbit days after dx on or after "
+         f"{d}. Train = covered episodes after dx and before {d}; test = covered episodes "
+         f"on or after {d}. Follow-up after the split: about "
+         f"{months(span.get('wear_days_span'))} months of Fitbit data and "
+         f"{months(span.get('visit_days_span'))} months of visits. \"Known\" is by date "
+         "only, so it slightly overcounts persons in the earlier release (late EHR records, "
+         "Fitbit history synced later); test counts are exact. Columns are nested.", "",
+         f"| split class | {SPLIT_HEAD}", "|---|" + "--:|" * 10]
+    for _, r in split[split["mondo_id"] == ALL].iterrows():
+        L.append(f"| {r['event_class']} | {_split_row(r, floor)}")
+    a = split[(split["mondo_id"] == ALL) & (split["event_class"] == "ed_or_inpatient")]
+    if len(a):
+        L += ["", f"Known persons' Fitbit days on or after {d}: {int(a.iloc[0]['wd_post']):,}"]
+    dd = split[(split["mondo_id"] != ALL) & (split["event_class"] == "ed_or_inpatient")
+               & (split["n_known"] + split["n_new"] >= floor)]
+    L += ["", f"By disease, ed_or_inpatient (known + new persons >= {floor}):", "",
+          f"| split Mondo | disease | {SPLIT_HEAD}", "|---|---|" + "--:|" * 10]
+    for _, r in dd.sort_values("n_known", ascending=False).iterrows():
+        L.append(f"| {r['mondo_id']} | {str(names.get(r['mondo_id'], r['mondo_id']))[:44]} | "
+                 f"{_split_row(r, floor)}")
+    return L + [""]
+
+
 COUNT_COLS = ["n_dx", "n_wear", "n_ev", "n_ev_p", "n_cov", "n_cov_p", "n_cov_p2",
               "n_cov_pre", "n_cov_pre_p"]
 
@@ -273,7 +402,7 @@ EVENT_HEAD = ("events after dx | persons | covered events | persons | persons wi
 
 def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: dict,
                   meta: dict, *, sites: pd.DataFrame | None = None,
-                  floor: int = EGRESS_FLOOR, top_visit_types: int = 15) -> str:
+                  split: pd.DataFrame | None = None, floor: int = EGRESS_FLOOR, top_visit_types: int = 15) -> str:
     lb, mc = meta["lookback"], meta["min_cov"]
     L = ["# Wearables x ED / inpatient events (All of Us)", "",
          f"CDR: `{meta['cdr']}`", "",
@@ -321,6 +450,9 @@ def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: di
                      f"{_row(r, floor)}")
         L.append("")
 
+    if split is not None:
+        L += format_split(split, names, meta, floor=floor)
+
     L += ["## By EHR source (all selected diseases)", ""]
     if sites is None:
         L += ["No EHR source column found (no `*_ext` table with `src_id` for visits).", ""]
@@ -365,6 +497,9 @@ def main(argv=None) -> int:
     p.add_argument("--washout", type=int, default=7,
                    help="visit starts within this many days of the previous one join its "
                         "episode")
+    p.add_argument("--after", default="",
+                   help="YYYY-MM-DD: also report a prospective split at this date (e.g. "
+                        "the previous CDR's data cutoff)")
     p.add_argument("--mondo-version", default="2026-06-02")
     p.add_argument("--mondo-cache-dir", default="data/mondo")
     p.add_argument("--tag", default="", help="run name (default: built by run_name)")
@@ -414,6 +549,15 @@ WHERE table_name IN UNNEST(@tables)""",
         psite = query(client, ctes + PERSON_SITE_SELECT.format(cdr=cdr, site_table=site_table),
                       params)
         sites = site_summary(ev, psite, expo, min_cov=args.min_cov)
+    split = None
+    if args.after:
+        sp = {**params, "split": ("DATE", args.after)}
+        print(f"[events] split queries at {args.after}…", flush=True)
+        sev = query(client, ctes + SPLIT_EVENTS_SELECT,
+                    {**sp, "lookback": ("INT64", int(args.lookback))})
+        sexpo = query(client, ctes + SPLIT_EXPOSURE_SELECT, sp)
+        span = query(client, ctes + SPLIT_SPAN_SELECT, sp)
+        split = split_summary(sev, sexpo, n_dx, min_cov=args.min_cov)
     summ = summarize(ev, expo, n_dx, min_cov=args.min_cov)
     cov = {"ed_or_inpatient": coverage_bins(ev, "ed_or_inpatient")}
     meta = {"cdr": cdr, "wear_tables": found, "flags": flags, "under": roots,
@@ -421,12 +565,15 @@ WHERE table_name IN UNNEST(@tables)""",
             "min_dx_dates": args.min_dx_dates, "lookback": args.lookback,
             "min_cov": args.min_cov, "washout": args.washout,
             "site_table": site_table, "site_tables": site_tables,
+            "after": args.after or None,
+            "split_span": ({k: (None if pd.isna(v) else int(v))
+                            for k, v in span.iloc[0].items()} if split is not None else None),
             "n_rare_nodes": int(rmap["mondo_id"].nunique())}
     tag = args.tag or run_name(roots, names, flags, exact=args.exact,
                                descendants=not args.no_descendants,
                                min_dx_dates=args.min_dx_dates)
     meta["run"] = tag
-    text = format_report(summ, vtypes, cov, names, meta, sites=sites)
+    text = format_report(summ, vtypes, cov, names, meta, sites=sites, split=split)
     (out / f"{tag}_events-report.md").write_text(text)
     masked_table(summ, names).to_csv(out / f"{tag}_events-table.tsv", sep="\t", index=False)
     mask_counts(vtypes, ["n_visits", "n_persons"]).to_csv(
@@ -434,6 +581,9 @@ WHERE table_name IN UNNEST(@tables)""",
     if sites is not None:
         mask_counts(sites, ["n_persons", "n_cov", "n_cov_p"]).to_csv(
             out / f"{tag}_sites.tsv", sep="\t", index=False)
+    if split is not None:
+        masked_split_table(split, names).to_csv(out / f"{tag}_split-table.tsv", sep="\t",
+                                                index=False)
     (out / f"{tag}_events-run.json").write_text(json.dumps(meta, indent=1, default=str))
     try:  # plots are drawn from the masked report text only
         from audits.wearables_events_plots import write_plots

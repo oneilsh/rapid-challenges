@@ -54,6 +54,14 @@ on the Workbench only; their names carry `DO_NOT_EGRESS`, which `.gitignore` blo
 first diagnosis for the same diseases, and how many have >= `--min-cov` Fitbit days in the
 `--lookback` days before them: the data behind a "predict an acute visit" task. It also writes plots from the masked report;
 `make plot-wearables-events REPORT=results/wearables-events/<run>.md` redraws them locally.
+`make wearables-events-split [AFTER=2023-10-01]` adds a "Prospective split" section: of the
+persons diagnosed and wearing before AFTER, how many covered episodes fall on or after it
+(test) versus before (train), plus new persons' episodes. Run on V9 with the V8 cutoff
+(the default) to see what one release adds, a stand-in for a V10 holdout.
+
+In a new workspace (e.g. a Controlled Tier one), run `make setup` and pass
+`RUNS_DIR=/home/jupyter/workspace/<that workspace's bucket mount>`: the default `RUNS_DIR`
+is the original workspace's mount.
 
 wearables-timing writes one flat folder per CDR, every file named after the run:
 

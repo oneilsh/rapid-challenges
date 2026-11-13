@@ -139,6 +139,13 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
             return concept
         if "INFORMATION_SCHEMA" in sql:
             return pd.DataFrame({"table_name": ["activity_summary"], "column_name": ["date"]})
+        if "wear_days_span" in sql:
+            return pd.DataFrame({"wear_days_span": [457], "visit_days_span": [450]})
+        if "split_day" in sql and "cov_days" in sql:
+            seen["split"] = params
+            return _split_rows()[0].replace({"M:1": "MONDO:A"})
+        if "wd_pre" in sql:
+            return _split_rows()[1].replace({"M:1": "MONDO:A"})
         if "cov_days" in sql:
             seen["ev"] = params
             return _ev().replace({"M:1": "MONDO:A"})
@@ -157,7 +164,7 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     monkeypatch.setattr(dw, "download_cached", lambda v, f, c: files[f])
     out = tmp_path / "out"
     assert we.main(["--out-dir", str(out), "--flags", "orphanet_rare", "--under",
-                    "MONDO:AI", "--exact", "--tag", "ai"]) == 0
+                    "MONDO:AI", "--exact", "--tag", "ai", "--after", "2023-10-01"]) == 0
     out = out / "ds"
     assert seen["ev"]["lookback"] == ("INT64", 30)
     assert seen["ev"]["washout"] == ("INT64", 7)
@@ -167,6 +174,9 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     assert "`p.ds.visit_occurrence_ext`" in seen["site"]
     assert "| site 1 | 20 | 20 | 20 |" in md and (out / "ai_sites.tsv").exists()
     assert "EHR site 7" not in (out / "ai_sites.tsv").read_text()
+    assert seen["split"]["split"] == ("DATE", "2023-10-01")
+    assert "## Prospective split at 2023-10-01" in md and (out / "ai_split-table.tsv").exists()
+    assert "| MONDO:A | disease A | 25 |" in md
 
 
 def test_plots_read_only_the_masked_report(tmp_path):
@@ -189,3 +199,59 @@ def test_plots_read_only_the_masked_report(tmp_path):
                                        "run_events-plot-coverage.png",
                                        "run_events-plot-disease-persons.png",
                                        "run_events-plot-disease-rates.png"]
+
+
+def _split_rows():
+    """Split at day 0 of the calendar. Disease M:1 (ALL mirrors it):
+    persons 0-24 known (dx at split day -50, wearing before), 0-19 still wearing after;
+    each has a covered train episode (split day -10) and persons 0-9 a covered test
+    episode (split day +20) plus an uncovered one (+60). Persons 25-29 are new (dx at
+    split day +5) with a covered episode at +30; person 30 has dx before the split but
+    no Fitbit until after it, so is new too, with a covered episode at +40."""
+    ev, ex = [], []
+    for m in ("M:1", wt.ALL):
+        for pid in range(25):
+            ex.append((pid, m, -50, 100, 300 if pid < 20 else 0))
+            ev.append((pid, m, 40, True, False, None, 30, -10, -50))
+            if pid < 10:
+                ev.append((pid, m, 70, False, True, None, 20, 20, -50))
+                ev.append((pid, m, 110, True, False, None, 2, 60, -50))
+        for pid in range(25, 30):
+            ex.append((pid, m, 5, 0, 200))
+            ev.append((pid, m, 25, True, False, None, 25, 30, 5))
+        ex.append((30, m, -20, 0, 150))
+        ev.append((30, m, 60, True, False, None, 25, 40, -20))
+    sev = pd.DataFrame(ev, columns=["pid", "mondo_id", "rel_day", "is_ed", "is_ip", "site",
+                                    "cov_days", "split_day", "dx_split_day"])
+    sexpo = pd.DataFrame(ex, columns=["pid", "mondo_id", "dx_split_day", "wd_pre", "wd_post"])
+    return sev, sexpo
+
+
+def test_split_summary_known_new_train_test():
+    sev, sexpo = _split_rows()
+    s = we.split_summary(sev, sexpo, _n_dx(), min_cov=14).set_index(["mondo_id", "event_class"])
+    a = s.loc[(wt.ALL, "ed_or_inpatient")]
+    assert (a["n_known"], a["n_known_post"], a["wd_post"]) == (25, 20, 6000)
+    assert (a["n_train"], a["n_train_p"], a["n_test"], a["n_test_p"]) == (25, 25, 10, 10)
+    assert pd.isna(a["test_per_1k"])          # 10 test episodes < floor: no rate
+    assert (a["n_new"], a["n_new_test"], a["n_new_test_p"]) == (6, 6, 6)
+    ip = s.loc[("M:1", "inpatient")]
+    assert (ip["n_train"], ip["n_test"], ip["n_new_test"]) == (0, 10, 0)
+    meta = {"after": "2023-10-01", "split_span": {"wear_days_span": 457,
+                                                  "visit_days_span": 450}}
+    md = "\n".join(we.format_split(we.split_summary(sev, sexpo, _n_dx(), min_cov=14),
+                                   {"M:1": "foo"}, meta))
+    assert "## Prospective split at 2023-10-01" in md and "about 15.0 months" in md
+    assert "| ed_or_inpatient | 25 | 20 | 25 | 25 | <20 | <20 | — | <20 | <20 | <20 |" in md
+    assert "| M:1 | foo | 25 |" in md
+    t = we.masked_split_table(we.split_summary(sev, sexpo, _n_dx(), min_cov=14), {})
+    assert set(t["n_test"]) == {"<20", "0"} and set(t["test_per_1k"]) == {""}
+
+
+def test_split_sql_parses_and_plots_ignore_split_tables():
+    sqlglot = __import__("pytest").importorskip("sqlglot")
+    sql, _ = wt.typed_wear_sql("p.ds", {"activity_summary": {"date"}}, intraday=False)
+    ctes = wt.timing_ctes("p.ds", sql) + we.events_ctes().replace("{cdr}", "p.ds")
+    for body in (we.SPLIT_EVENTS_SELECT, we.SPLIT_EXPOSURE_SELECT, we.SPLIT_SPAN_SELECT):
+        sqlglot.parse_one(ctes + body, read="bigquery")
+    assert "DATE_DIFF(e.vd, @split, DAY) AS split_day" in we.SPLIT_EVENTS_SELECT

@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events plot-wearables-timing plot-wearables-events mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -37,6 +37,8 @@ help:
 	@echo "  make wearables-events [SCOPE=cardio] - ED / inpatient visits vs Fitbit coverage"
 	@echo "                               -> RUNS_DIR/wearables-events/ (ARGS='--lookback 30 --min-cov 14')"
 	@echo "  make plot-wearables-timing REPORT=results/wearables-timing/<run>.md"
+	@echo "  make wearables-events-split [AFTER=2023-10-01] - + prospective split at AFTER (V8"
+	@echo "                               cutoff by default; run on V9 to size a V10 holdout)"
 	@echo "  make plot-wearables-events REPORT=results/wearables-events/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
@@ -111,6 +113,12 @@ wearables-events: $(WORKSPACE_ENV)
 	mkdir -p "$(EVENTS_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_events.py \
 	    --out-dir "$(EVENTS_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
 	    $(SCOPE_ARGS) $(ARGS) 2>&1 | tee -a "$(EVENTS_OUT)/wearables_events_log.md"
+
+# Events + a prospective split at AFTER: run on V9 with the V8 cutoff to see what one
+# release adds (a stand-in for what V10 would add as a holdout).
+AFTER ?= 2023-10-01
+wearables-events-split:
+	$(MAKE) wearables-events ARGS="--after $(AFTER) $(ARGS)"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=
