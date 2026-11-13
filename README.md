@@ -58,6 +58,11 @@ first diagnosis for the same diseases, and how many have >= `--min-cov` Fitbit d
 persons diagnosed and wearing before AFTER, how many covered episodes fall on or after it
 (test) versus before (train), plus new persons' episodes. Run on V9 with the V8 cutoff
 (the default) to see what one release adds, a stand-in for a V10 holdout.
+`make wearables-events-sites [FOCUS='site 6']` adds `<run>_site-diag-report.md`: per EHR
+source, episodes per person, days between episodes, visit days and rows per episode and
+same-day inpatient stays; then one focus source (default: most episodes per person)
+against the rest by start year, gap between episodes, visit concept, and the conditions
+and procedures on those visits. Site labels match the run's events report.
 
 In another workspace, run `make setup` and pass `RUNS_DIR=<that workspace's bucket
 mount>` (under `/home/<user>/workspace/`): the default `RUNS_DIR` is the V9 workspace's.

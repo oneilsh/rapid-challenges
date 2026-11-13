@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split plot-wearables-timing plot-wearables-events mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -40,6 +40,7 @@ help:
 	@echo "  make plot-wearables-timing REPORT=results/wearables-timing/<run>.md"
 	@echo "  make wearables-events-split [AFTER=2023-10-01] - + prospective split at AFTER (V8"
 	@echo "                               cutoff by default; run on V9 to size a V10 holdout)"
+	@echo "  make wearables-events-sites [FOCUS='site 6'] - + EHR source diagnostics report"
 	@echo "  make plot-wearables-events REPORT=results/wearables-events/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
@@ -120,6 +121,12 @@ wearables-events: $(WORKSPACE_ENV)
 AFTER ?= 2023-10-01
 wearables-events-split:
 	$(MAKE) wearables-events ARGS="--after $(AFTER) $(ARGS)"
+
+# Events + EHR-source diagnostics (<run>_site-diag-report.md). FOCUS='site N' picks the
+# source to compare against the rest (default: most episodes per person).
+FOCUS ?=
+wearables-events-sites:
+	$(MAKE) wearables-events ARGS="--site-diagnostics $(if $(FOCUS),--focus-site '$(FOCUS)') $(ARGS)"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=

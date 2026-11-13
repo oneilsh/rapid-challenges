@@ -126,6 +126,24 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     seen = {}
 
     def fake_query(client, sql, params=None):
+        if "d.max_ip_los" in sql and "AS grp" not in sql:
+            eps = []
+            for pid in range(20):
+                for k in range(3):
+                    eps.append((pid, "EHR site 7", f"2022-0{k + 1}-01", 1, 1, 1, 0))
+            for pid in range(20, 45):
+                eps.append((pid, "EHR site 3", "2021-05-01", 2, 3, 1, 2))
+            return pd.DataFrame(eps, columns=["pid", "site", "start", "n_days", "n_rows",
+                                              "n_ip_rows", "max_ip_los"])
+        if "AS grp, r.visit_concept_id" in sql:
+            seen["focus"] = params["focus"]
+            return pd.DataFrame({"grp": ["focus"], "visit_concept_id": [9201],
+                                 "concept_name": ["Inpatient Visit"], "n_rows": [60],
+                                 "n_persons": [20]})
+        if "AS grp, h.domain" in sql:
+            return pd.DataFrame({"grp": ["focus"], "domain": ["procedure"],
+                                 "concept_id": [5], "concept_name": ["Infusion"],
+                                 "n_eps": [60], "n_persons": [20]})
         if "ENDS_WITH(table_name" in sql:
             return pd.DataFrame({"table_name": ["condition_occurrence_ext",
                                                 "visit_occurrence_ext"]})
@@ -164,7 +182,7 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     monkeypatch.setattr(dw, "download_cached", lambda v, f, c: files[f])
     out = tmp_path / "out"
     assert we.main(["--out-dir", str(out), "--flags", "orphanet_rare", "--under",
-                    "MONDO:AI", "--exact", "--tag", "ai", "--after", "2023-10-01"]) == 0
+                    "MONDO:AI", "--exact", "--tag", "ai", "--after", "2023-10-01", "--site-diagnostics"]) == 0
     out = out / "ds"
     assert seen["ev"]["lookback"] == ("INT64", 30)
     assert seen["ev"]["washout"] == ("INT64", 7)
@@ -177,6 +195,10 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     assert seen["split"]["split"] == ("DATE", "2023-10-01")
     assert "## Prospective split at 2023-10-01" in md and (out / "ai_split-table.tsv").exists()
     assert "| MONDO:A | disease A | 25 |" in md
+    diag = (out / "ai_site-diag-report.md").read_text()
+    assert seen["focus"] == ("STRING", "EHR site 7")
+    assert "## Focus: site 1 against all other sources" in diag
+    assert "EHR site" not in diag
 
 
 def test_plots_read_only_the_masked_report(tmp_path):

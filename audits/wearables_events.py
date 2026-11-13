@@ -105,6 +105,7 @@ vt AS (
   GROUP BY descendant_concept_id),
 vis AS (
   SELECT v.person_id, v.visit_occurrence_id, CAST(v.visit_start_date AS DATE) AS vd,
+         CAST(v.visit_end_date AS DATE) AS ved, v.visit_concept_id,
          vt.is_ed, vt.is_ip, {site_col} AS site
   FROM `{{cdr}}.visit_occurrence` v
   JOIN vt ON v.visit_concept_id = vt.cid
@@ -271,6 +272,12 @@ def site_label(src_id: str, rank: int) -> str:
 
 def site_summary(ev: pd.DataFrame, psite: pd.DataFrame, expo: pd.DataFrame, *,
                  min_cov: int) -> pd.DataFrame:
+    """Published per-source table (labels only); see `site_ranks`."""
+    return site_ranks(ev, psite, expo, min_cov=min_cov).drop(columns="src_id")
+
+
+def site_ranks(ev: pd.DataFrame, psite: pd.DataFrame, expo: pd.DataFrame, *,
+               min_cov: int) -> pd.DataFrame:
     """Per EHR source, for the pooled (ALL) cohort: persons whose primary source it is,
     covered ED / inpatient episodes after dx whose first day was recorded there, and
     persons with such an episode. Rows sorted by persons; labels from `site_label`."""
@@ -283,7 +290,7 @@ def site_summary(ev: pd.DataFrame, psite: pd.DataFrame, expo: pd.DataFrame, *,
     out = out.fillna(0).astype(int).sort_values(["n_persons", "n_cov"], ascending=False)
     out = out.reset_index().rename(columns={"index": "src_id", "primary_site": "src_id"})
     out.insert(0, "site", [site_label(s, i + 1) for i, s in enumerate(out["src_id"])])
-    return out.drop(columns="src_id")
+    return out   # src_id stays in memory only: never write this frame
 
 
 def split_summary(sev: pd.DataFrame, sexpo: pd.DataFrame, n_dx: pd.DataFrame, *,
@@ -481,6 +488,30 @@ def format_report(summ: pd.DataFrame, vtypes: pd.DataFrame, cov: dict, names: di
     return "\n".join(L) + "\n"
 
 
+def _site_diagnostics(client, cdr, ctes, params, ranks, meta, args, out, tag) -> None:
+    from audits import wearables_site_diag as sd
+    dctes = ctes + sd.diag_ctes()
+    dp = {**params, "lookback": ("INT64", int(args.lookback)),
+          "min_cov": ("INT64", int(args.min_cov))}
+    print("[events] site diagnostics: episodes query…", flush=True)
+    eps = sd.label_episodes(query(client, dctes + sd.DIAG_EPISODES_SELECT, dp), ranks)
+    ps = sd.per_site(eps)
+    focus = sd.pick_focus(ps, args.focus_site or None)
+    src = ranks.loc[ranks["site"] == focus, "src_id"]
+    if focus is None or src.empty:
+        print(f"[events] site diagnostics: no focus source ({focus!r})", flush=True)
+        return
+    fp = {**dp, "focus": ("STRING", str(src.iloc[0]))}
+    print(f"[events] site diagnostics: {focus} visit types / concepts…", flush=True)
+    vt = query(client, dctes + sd.DIAG_VISIT_TYPES_SELECT.format(cdr=cdr), fp)
+    concepts = query(client, dctes + sd.DIAG_CONCEPTS_SELECT.format(cdr=cdr), fp)
+    text = sd.format_diag(eps, ps, focus, vt, concepts,
+                          {**meta, "focus_given": bool(args.focus_site)})
+    (out / f"{tag}_site-diag-report.md").write_text(text)
+    print(text, flush=True)
+    print(f"[events] wrote {out}/{tag}_site-diag-report.md", flush=True)
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--out-dir", required=True)
@@ -500,6 +531,11 @@ def main(argv=None) -> int:
     p.add_argument("--after", default="",
                    help="YYYY-MM-DD: also report a prospective split at this date (e.g. "
                         "the previous CDR's data cutoff)")
+    p.add_argument("--site-diagnostics", action="store_true",
+                   help="also write <run>_site-diag-report.md (see wearables_site_diag)")
+    p.add_argument("--focus-site", default="",
+                   help="'site N' label (from the events report) for the diagnostics; "
+                        "default: most episodes per person")
     p.add_argument("--mondo-version", default="2026-06-02")
     p.add_argument("--mondo-cache-dir", default="data/mondo")
     p.add_argument("--tag", default="", help="run name (default: built by run_name)")
@@ -548,7 +584,8 @@ WHERE table_name IN UNNEST(@tables)""",
         print("[events] EHR source query…", flush=True)
         psite = query(client, ctes + PERSON_SITE_SELECT.format(cdr=cdr, site_table=site_table),
                       params)
-        sites = site_summary(ev, psite, expo, min_cov=args.min_cov)
+        ranks = site_ranks(ev, psite, expo, min_cov=args.min_cov)
+        sites = ranks.drop(columns="src_id")
     split = None
     if args.after:
         sp = {**params, "split": ("DATE", args.after)}
@@ -585,6 +622,11 @@ WHERE table_name IN UNNEST(@tables)""",
         masked_split_table(split, names).to_csv(out / f"{tag}_split-table.tsv", sep="\t",
                                                 index=False)
     (out / f"{tag}_events-run.json").write_text(json.dumps(meta, indent=1, default=str))
+    if args.site_diagnostics:
+        if not site_table:
+            print("[events] no EHR source table: skipping site diagnostics", flush=True)
+        else:
+            _site_diagnostics(client, cdr, ctes, params, ranks, meta, args, out, tag)
     try:  # plots are drawn from the masked report text only
         from audits.wearables_events_plots import write_plots
         for path in write_plots(text, out, prefix=f"{tag}_events-plot-"):
