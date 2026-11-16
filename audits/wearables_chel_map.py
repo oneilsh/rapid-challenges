@@ -30,12 +30,13 @@ from audits.wearables_healthkit import _project_datasets, _wb_datasets
 from audits.wearables_rare import _SOURCE_FLAGS, build_rare_map
 from audits.wearables_timing import run_name, timing_ctes, typed_wear_sql, _TIMING_TABLES
 from rapidaudit.aou import bq_client, query, workspace_env
-from rapidaudit.egress import cell
+from rapidaudit.egress import EGRESS_FLOOR, cell
 
 GPKG_URL = ("https://raw.githubusercontent.com/rwdcollaborative/amia-2026-rwd-workshop/"
             "3c190c69cb4c3d4fac98a5b6bc698cc423712823/staging/data/h3_res3.gpkg")
 CONUS = (-125, 24, -66, 50)   # lon / lat box for the map
 BLUES = ["#cde2fb", "#86b6ef", "#3987e5", "#256abf", "#184f95", "#0d366b"]
+MASK_GREY, ZERO_GREY = "#a8a8a4", "#ececea"
 
 
 def latest_hex_sql(link: dict, date_col: str | None) -> str:
@@ -69,14 +70,18 @@ def fetch_gpkg(cache_dir: Path) -> Path:
     return dest
 
 
-def draw(counts: pd.DataFrame, gpkg: Path, png: Path, title: str) -> dict:
-    """Two panels (persons with the dx / with Fitbit too) on a log scale; hexagons with
-    nobody in grey. Returns how many persons fell outside the map / the shapes."""
+def draw(counts: pd.DataFrame, gpkg: Path, png: Path, title: str,
+         floor: int = EGRESS_FLOOR) -> dict:
+    """Two panels (persons with the dx / with Fitbit too). Hexagons with >= floor
+    persons are colored on a log scale; 1..floor-1 are one masked grey, 0 a lighter
+    grey. Returns how many persons fell outside the map / the shapes."""
     import geopandas as gpd
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap, LogNorm
+    from matplotlib.patches import Patch
+    from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
     hexes = gpd.read_file(gpkg)
     df = hexes.merge(counts, on="h3_id", how="left").fillna({"n_dx": 0, "n_fitbit": 0})
@@ -85,14 +90,28 @@ def draw(counts: pd.DataFrame, gpkg: Path, png: Path, title: str) -> dict:
     fig, axes = plt.subplots(1, 2, figsize=(18, 6.5))
     for ax, col, label in zip(axes, ("n_dx", "n_fitbit"),
                               ("with a selected diagnosis", "... and Fitbit data")):
-        conus[conus[col] == 0].plot(ax=ax, color="#ececea", edgecolor="white", linewidth=0.3)
-        pop = conus[conus[col] > 0]
-        if len(pop):
-            pop.plot(ax=ax, column=col, cmap=cmap, edgecolor="white", linewidth=0.3,
-                     norm=LogNorm(vmin=1, vmax=max(2, pop[col].max())), legend=True,
+        n = conus[col]
+        conus[n == 0].plot(ax=ax, color=ZERO_GREY, edgecolor="white", linewidth=0.3)
+        conus[(n > 0) & (n < floor)].plot(ax=ax, color=MASK_GREY, edgecolor="white",
+                                          linewidth=0.3)
+        big = conus[n >= floor]
+        if len(big):
+            big.plot(ax=ax, column=col, cmap=cmap, edgecolor="white", linewidth=0.3,
+                     norm=LogNorm(vmin=floor, vmax=max(floor + 1, big[col].max())),
+                     legend=True,
                      legend_kwds={"label": "persons per hexagon (log)", "shrink": 0.6})
-        ax.set_title(f"Persons {label}: {int(conus[col].sum()):,} in "
-                     f"{int((conus[col] > 0).sum()):,} hexagons")
+            cax, top = fig.axes[-1], big[col].max()
+            ticks = [t for t in (20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000)
+                     if t <= top] or [floor]
+            cax.yaxis.set_major_locator(FixedLocator(ticks))
+            cax.yaxis.set_minor_locator(NullLocator())
+            cax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{int(v):,}"))
+        ax.legend(handles=[Patch(color=MASK_GREY, label=f"1–{floor - 1} (masked)"),
+                           Patch(color=ZERO_GREY, label="0")],
+                  loc="lower left", frameon=False)
+        ax.set_title(f"Persons {label}: {int(n.sum()):,} · {int((n >= floor).sum()):,} "
+                     f"hexagons with >= {floor}, {int(((n > 0) & (n < floor)).sum()):,} "
+                     f"with 1–{floor - 1}")
         ax.set_axis_off()
     fig.suptitle(f"{title} — DO NOT EGRESS (small cells)")
     plt.tight_layout()
