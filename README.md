@@ -69,11 +69,14 @@ site codes recurring same-day encounters as 9201).
 
 `make wearables-healthkit [HK=<project>.<dataset>]` (rare autoimmune, inpatient-stay rule)
 covers Apple HealthKit, a stand-alone dataset next to the V9 CDR (Sep 2026 off-cycle
-release). It finds the dataset (or takes `HK=`), picks a person and a date column per table,
-and reports tables and columns, who has HealthKit vs Fitbit data, the device-like values
-held by >= 20 persons, and the cohort's ED / inpatient episodes covered by Fitbit, by
-HealthKit, by either and only thanks to HealthKit. Tables over 100 GB are skipped
-(`ARGS='--max-gb N'` or `--hk-tables a,b`); `--hk-date-cols table=col` overrides a pick.
+release; V9 CT: `C_V9_R6_offcycle_healthkit`). It finds the dataset (or takes `HK=`), counts
+activity and vital rows (not user-entered; `physical_measurements` is described but not
+counted, `--hk-skip`), flags Apple Watch rows from the device table, and reports tables,
+data types and device models (values with >= 20 persons only), who has HealthKit vs Fitbit,
+and the cohort's ED / inpatient episodes covered by Fitbit, by HealthKit, by watch days
+alone and added by HealthKit. Every query is dry-run first; the run stops over
+`--max-tb` (default 3). Nested cells are suppressed together: where a total splits into
+parts and one is <20, the larger parts show "—".
 
 In another workspace, run `make setup` and pass `RUNS_DIR=<that workspace's bucket
 mount>` (under `~/workspace/`): the default `RUNS_DIR` is the V9 workspace's.

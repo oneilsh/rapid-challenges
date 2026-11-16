@@ -51,3 +51,14 @@ def query(client, sql: str, params: dict | None = None):
           for k, (t, v) in (params or {}).items()]
     job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=qp))
     return job.result().to_dataframe()
+
+
+def dry_run_bytes(client, sql: str, params: dict | None = None) -> int:
+    """Bytes BigQuery would bill for `sql` (a dry run: nothing is read or charged)."""
+    from google.cloud import bigquery
+    qp = [bigquery.ArrayQueryParameter(k, t, list(v)) if isinstance(v, (list, tuple))
+          else bigquery.ScalarQueryParameter(k, t, v)
+          for k, (t, v) in (params or {}).items()]
+    job = client.query(sql, job_config=bigquery.QueryJobConfig(
+        query_parameters=qp, dry_run=True, use_query_cache=False))
+    return int(job.total_bytes_processed or 0)
