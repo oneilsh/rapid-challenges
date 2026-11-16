@@ -226,6 +226,7 @@ def test_main_end_to_end_with_fake_bigquery(tmp_path, monkeypatch):
     assert "| Apple Inc. | Watch | 9,000 |" in md and "Jo's" not in md
     assert "| ed_or_inpatient | 40 (40) | 20 (20) | <20 (<20) | <20 (<20) | <20 (<20) |" in md
     assert "either 75" in md and "| either |" not in md
+    assert "| MONDO:A | disease A | 20 (20) | <20 (<20) | <20 (<20) | <20 (<20) |" in md
     ev_sql = [s for s in seen["sql"] if "cov_watch" in s][0]
     assert "`p.hk.activity_measurements`" in ev_sql and "physical_measurements" not in ev_sql
     for f in ("hk-schema.tsv", "hk-run.json"):

@@ -455,8 +455,11 @@ def format_report(meta, tables, schema, kinds, overlap, years, types, models, co
     L += ["", f"ED or inpatient by disease (Fitbit + added >= {floor}, i.e. a disease "
           "the challenge could score):", ""]
     sub = evd[(evd["mondo_id"] != ALL) & (evd["cov_any"] >= floor)]
-    L += _t(["Mondo", "disease"] + hdr,
-            [[r.mondo_id, names.get(r.mondo_id, "")] + _ev_cells(r, floor)
+    # No episodes column per disease: its base (Fitbit or HealthKit persons) differs from
+    # the wearables_events reports' (Fitbit only), so the difference between the two
+    # files would give small per-disease counts of HealthKit-only persons.
+    L += _t(["Mondo", "disease"] + hdr[1:],
+            [[r.mondo_id, names.get(r.mondo_id, "")] + _ev_cells(r, floor)[1:]
              for r in sub.itertuples()])
     return "\n".join(L) + "\n"
 
