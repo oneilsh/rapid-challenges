@@ -58,7 +58,8 @@ from rapidaudit.egress import EGRESS_FLOOR, cell
 
 DATASET_NAME = re.compile(r"chel|h3|hex|environ|exposure|geo|climate", re.I)
 HEX_COL = re.compile(r"(^|_)(h3|hex)", re.I)
-PERSON_COL = re.compile(r"^person_id$|participant", re.I)
+# research_id is the AoU participant id in the CLAD tables (= the CDR person_id).
+PERSON_COL = re.compile(r"^person_id$|^research_id$|participant", re.I)
 SHOW = SUPPRESSED  # re-exported for tests
 
 
@@ -80,7 +81,8 @@ def _person_col(cols: dict) -> str | None:
 
 def _hex_col(cols: dict) -> str | None:
     hx = [c for c, t in cols.items() if HEX_COL.search(c) and t in ("STRING", "INT64")]
-    return (next((c for c in hx if c.lower() in ("h3_id", "h3", "h3_index", "hex_id")), None)
+    low = {c.lower(): c for c in hx}
+    return (next((low[n] for n in ("h3_id", "h3", "h3_index", "hex_id") if n in low), None)
             or (hx[0] if hx else None))
 
 

@@ -18,7 +18,11 @@ def _schema():
             (CH, "loc_history", "person_id", "INT64"), (CH, "loc_history", "location_id", "INT64"),
             (CH, "hex_location", "location_id", "INT64"), (CH, "hex_location", "hex_id", "INT64"),
             (CH, "chel_indicators", "h3_id", "STRING"), (CH, "chel_indicators", "pm25", "FLOAT64"),
-            (CH, "readme", "text", "STRING")]
+            (CH, "readme", "text", "STRING"),
+            (CH, "clad_location_history_hex3", "research_id", "INT64"),
+            (CH, "clad_location_history_hex3", "start_date", "STRING"),
+            (CH, "clad_location_history_hex3", "h3_id", "STRING"),
+            (CH, "clad_chel_2024", "hex_id", "INT64"), (CH, "clad_chel_2024", "h3_id", "STRING")]
     return pd.DataFrame(rows, columns=["dataset", "table_name", "column_name", "data_type"])
 
 
@@ -27,10 +31,14 @@ def test_candidates_and_links():
                               "p.cdr") == [CH]
     links, ind = ch.find_links(_schema())
     names = sorted(ch.link_name(k) for k in links)
-    assert names == [f"{CH}.loc_history → {CH}.hex_location.hex_id",
+    assert names == [f"{CH}.clad_location_history_hex3.h3_id",
+                     f"{CH}.loc_history → {CH}.hex_location.hex_id",
                      f"{CH}.participant_hex.h3_id",
                      f"p.cdr.person → {CH}.hex_location.hex_id"]
-    assert [i["table"] for i in ind] == [f"{CH}.chel_indicators"]
+    assert [(i["table"], i["hex_col"]) for i in ind] == [
+        (f"{CH}.chel_indicators", "h3_id"), (f"{CH}.clad_chel_2024", "h3_id")]
+    r = next(k for k in links if "clad_location" in k["table"])
+    assert "SAFE_CAST(t.research_id AS INT64) AS person_id" in ch.link_sql(r)
 
 
 def test_link_sql_formats_hex():
