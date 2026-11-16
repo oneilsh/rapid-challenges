@@ -1,4 +1,4 @@
-.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit wearables-chel plot-wearables-timing plot-wearables-events mondo-snomed-review
+.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit wearables-chel wearables-chel-map plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -51,6 +51,8 @@ help:
 	@echo "                               Fitbit doesn't -> RUNS_DIR/wearables-healthkit/"
 	@echo "  make wearables-chel [CHEL=<project>.<dataset>] - Fitbit + autoimmune persons placed"
 	@echo "                               in a CHEL H3 hexagon -> RUNS_DIR/wearables-chel/"
+	@echo "  make wearables-chel-map    - persons per CHEL hexagon, mapped (Workbench only:"
+	@echo "                               *_DO_NOT_EGRESS_chel-map.png / .tsv)"
 	@echo "  make plot-wearables-events REPORT=results/wearables-events/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
@@ -160,6 +162,13 @@ wearables-chel: $(WORKSPACE_ENV) | runs-dir
 	mkdir -p "$(CHEL_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_chel.py \
 	    --out-dir "$(CHEL_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" $(if $(CHEL),--chel-dataset '$(CHEL)') \
 	    --ip-overnight $(SCOPE_ARGS) $(ARGS) 2>&1 | tee -a "$(CHEL_OUT)/wearables_chel_log.md"
+
+# Map of the cohort per CHEL hexagon (latest residence). Small cells: DO_NOT_EGRESS.
+wearables-chel-map: $(WORKSPACE_ENV) | runs-dir
+	mkdir -p "$(CHEL_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_chel_map.py \
+	    --out-dir "$(CHEL_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
+	    --geo-cache-dir "$(REPO_ROOT)/data/geo" $(if $(CHEL),--chel-dataset '$(CHEL)') \
+	    $(SCOPE_ARGS) $(ARGS) 2>&1 | tee -a "$(CHEL_OUT)/wearables_chel_log.md"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=

@@ -164,3 +164,16 @@ def test_main_stops_without_links(tmp_path, monkeypatch):
         {"table_name": ["person"], "column_name": ["person_id"], "data_type": ["INT64"]}))
     with pytest.raises(SystemExit, match="no table links a person"):
         ch.main(["--out-dir", str(tmp_path), "--chel-dataset", CH])
+
+
+def test_map_sql_parses_and_drops_placeholders():
+    sqlglot = pytest.importorskip("sqlglot")
+    from audits import wearables_chel_map as cm
+    links, _ = ch.find_links(_schema())
+    link = next(k for k in links if "clad_location" in k["table"])
+    s = cm.latest_hex_sql(link, "start_date")
+    assert "WHERE LENGTH(h) = 15" in s and "SAFE.PARSE_DATE('%m/%d/%Y', sd)" in s
+    fb, _ = wt.typed_wear_sql("p.ds", {"activity_summary": {"date"}}, intraday=False)
+    ctes = wt.timing_ctes("p.ds", fb) + f",\nlatest AS ({s})\n"
+    sqlglot.parse_one(ctes + cm.HEX_COUNTS_SELECT, read="bigquery")
+    sqlglot.parse_one(cm.latest_hex_sql(link, None), read="bigquery")

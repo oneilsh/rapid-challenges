@@ -84,6 +84,9 @@ reaches an H3 hexagon (a person + hexagon table, or person / location_id to a lo
 table with a hexagon), and counts the Fitbit + autoimmune cohort that can be placed, by
 disease, with the covered episodes among them and which CHEL indicator tables cover their
 hexagons. No hexagon id is printed; if nothing links, it prints the columns it searched.
+`make wearables-chel-map` maps the cohort per hexagon (each person's latest residence;
+the workshop's `h3_res3.gpkg` shapes, downloaded into `data/geo/`). It has small cells, so
+it writes only `<run>_DO_NOT_EGRESS_chel-map.png` / `.tsv`: view on the Workbench.
 
 In another workspace, run `make setup` and pass `RUNS_DIR=<that workspace's bucket
 mount>` (under `~/workspace/`): the default `RUNS_DIR` is the V9 workspace's.
