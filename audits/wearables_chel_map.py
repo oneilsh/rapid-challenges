@@ -13,8 +13,10 @@ Hexagon shapes come from the AMIA 2026 RWD workshop's GeoPackage (`h3_res3.gpkg`
 resolution-3 hexagons, keyed by h3_id), downloaded once into --geo-cache-dir. Needs
 geopandas (in the Workbench image).
 
-EGRESS: per-hexagon counts include small cells, so every output is named
-`<run>_DO_NOT_EGRESS_chel-map*` and stays on the Workbench.
+EGRESS: per-hexagon counts include small cells, so the two-panel map and the table
+are named `<run>_DO_NOT_EGRESS_chel-map*` and stay on the Workbench. A one-panel figure,
+`<run>_chel-map-figure.png` (dx + Fitbit only), colors only hexagons with >= 20 persons,
+shows 1..19 as one grey, and prints no totals; it is meant to be shareable.
 """
 from __future__ import annotations
 
@@ -70,49 +72,61 @@ def fetch_gpkg(cache_dir: Path) -> Path:
     return dest
 
 
-def draw(counts: pd.DataFrame, gpkg: Path, png: Path, title: str,
-         floor: int = EGRESS_FLOOR) -> dict:
-    """Two panels (persons with the dx / with Fitbit too). Hexagons with >= floor
-    persons are colored on a log scale; 1..floor-1 are one masked grey, 0 a lighter
-    grey. Returns how many persons fell outside the map / the shapes."""
-    import geopandas as gpd
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.colors import LinearSegmentedColormap, LogNorm
+def _panel(fig, ax, gdf, col: str, floor: int, cmap) -> None:
+    """One map: 0 light grey, 1..floor-1 one masked grey, >= floor on a log color scale."""
+    from matplotlib.colors import LogNorm
     from matplotlib.patches import Patch
     from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
+    n = gdf[col]
+    gdf[n == 0].plot(ax=ax, color=ZERO_GREY, edgecolor="white", linewidth=0.3)
+    gdf[(n > 0) & (n < floor)].plot(ax=ax, color=MASK_GREY, edgecolor="white", linewidth=0.3)
+    big = gdf[n >= floor]
+    if len(big):
+        top = big[col].max()
+        big.plot(ax=ax, column=col, cmap=cmap, edgecolor="white", linewidth=0.3,
+                 norm=LogNorm(vmin=floor, vmax=max(floor + 1, top)), legend=True,
+                 legend_kwds={"label": "participants per hexagon", "shrink": 0.6})
+        cax = fig.axes[-1]
+        ticks = [t for t in (20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000)
+                 if t <= top] or [floor]
+        cax.yaxis.set_major_locator(FixedLocator(ticks))
+        cax.yaxis.set_minor_locator(NullLocator())
+        cax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{int(v):,}"))
+        cax.tick_params(length=0)
+        cax.set_frame_on(False)
+    ax.legend(handles=[Patch(color=MASK_GREY, label=f"1–{floor - 1} (masked)"),
+                       Patch(color=ZERO_GREY, label="none")],
+              loc="lower left", frameon=False)
+    ax.set_axis_off()
+
+
+def _conus(counts: pd.DataFrame, gpkg: Path):
+    import geopandas as gpd
     hexes = gpd.read_file(gpkg)
     df = hexes.merge(counts, on="h3_id", how="left").fillna({"n_dx": 0, "n_fitbit": 0})
-    conus = df.cx[CONUS[0]:CONUS[2], CONUS[1]:CONUS[3]].to_crs(epsg=5070)
+    return hexes, df.cx[CONUS[0]:CONUS[2], CONUS[1]:CONUS[3]].to_crs(epsg=5070)
+
+
+def draw(counts: pd.DataFrame, gpkg: Path, png: Path, title: str,
+         floor: int = EGRESS_FLOOR) -> dict:
+    """Two panels (persons with the dx / with Fitbit too), with totals: Workbench only.
+    Returns how many persons fell outside the map / the shapes."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+
+    hexes, conus = _conus(counts, gpkg)
     cmap = LinearSegmentedColormap.from_list("blues", BLUES)
     fig, axes = plt.subplots(1, 2, figsize=(18, 6.5))
     for ax, col, label in zip(axes, ("n_dx", "n_fitbit"),
                               ("with a selected diagnosis", "... and Fitbit data")):
         n = conus[col]
-        conus[n == 0].plot(ax=ax, color=ZERO_GREY, edgecolor="white", linewidth=0.3)
-        conus[(n > 0) & (n < floor)].plot(ax=ax, color=MASK_GREY, edgecolor="white",
-                                          linewidth=0.3)
-        big = conus[n >= floor]
-        if len(big):
-            big.plot(ax=ax, column=col, cmap=cmap, edgecolor="white", linewidth=0.3,
-                     norm=LogNorm(vmin=floor, vmax=max(floor + 1, big[col].max())),
-                     legend=True,
-                     legend_kwds={"label": "persons per hexagon (log)", "shrink": 0.6})
-            cax, top = fig.axes[-1], big[col].max()
-            ticks = [t for t in (20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000)
-                     if t <= top] or [floor]
-            cax.yaxis.set_major_locator(FixedLocator(ticks))
-            cax.yaxis.set_minor_locator(NullLocator())
-            cax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{int(v):,}"))
-        ax.legend(handles=[Patch(color=MASK_GREY, label=f"1–{floor - 1} (masked)"),
-                           Patch(color=ZERO_GREY, label="0")],
-                  loc="lower left", frameon=False)
+        _panel(fig, ax, conus, col, floor, cmap)
         ax.set_title(f"Persons {label}: {int(n.sum()):,} · {int((n >= floor).sum()):,} "
                      f"hexagons with >= {floor}, {int(((n > 0) & (n < floor)).sum()):,} "
                      f"with 1–{floor - 1}")
-        ax.set_axis_off()
     fig.suptitle(f"{title} — DO NOT EGRESS (small cells)")
     plt.tight_layout()
     fig.savefig(png, dpi=150)
@@ -121,6 +135,30 @@ def draw(counts: pd.DataFrame, gpkg: Path, png: Path, title: str,
     return {"persons_dx": int(counts["n_dx"].sum()),
             "persons_dx_on_map": int(conus["n_dx"].sum()),
             "persons_dx_no_shape": int(counts.loc[~counts["h3_id"].isin(known), "n_dx"].sum())}
+
+
+def draw_figure(counts: pd.DataFrame, gpkg: Path, png: Path, title: str,
+                floor: int = EGRESS_FLOOR) -> None:
+    """Shareable figure: persons with the dx AND Fitbit per hexagon, one panel.
+    Only hexagons with >= floor persons carry a value (a color); 1..floor-1 are one
+    grey. No person totals are printed: the map total minus totals in other reports
+    (persons outside the contiguous US, or without a hexagon) could be a small count."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+
+    _, conus = _conus(counts, gpkg)
+    cmap = LinearSegmentedColormap.from_list("blues", BLUES)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    _panel(fig, ax, conus, "n_fitbit", floor, cmap)
+    ax.set_title(title, loc="left", fontsize=13)
+    fig.text(0.02, 0.02, f"Latest residence, CHEL H3 resolution-3 hexagons, contiguous US. "
+             f"Hexagons with 1–{floor - 1} participants are masked.",
+             fontsize=8, color="#555555")
+    plt.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(png, dpi=300)
+    plt.close(fig)
 
 
 def main(argv=None) -> int:
@@ -189,6 +227,11 @@ WHERE table_name IN UNNEST(@tables)""", {"tables": ("STRING", [t for t, _, _ in 
                 f"{scope}: latest CHEL hexagon (H3 res 3)")
     print("[chel-map] " + ", ".join(f"{k} {cell(v)}" for k, v in info.items()), flush=True)
     print(f"[chel-map] wrote {stem}.png and .tsv (Workbench only: small cells)", flush=True)
+    fig_png = out / f"{tag}_chel-map-figure.png"
+    draw_figure(counts, fetch_gpkg(Path(args.geo_cache_dir)), fig_png,
+                f"Participants with {scope} and Fitbit data")
+    print(f"[chel-map] wrote {fig_png} (masked: 1–{EGRESS_FLOOR - 1} grey, no totals; "
+          "check before sharing)", flush=True)
     return 0
 
 
