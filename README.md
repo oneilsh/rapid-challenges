@@ -9,7 +9,7 @@ egress-safe tables.
 
 | path | what |
 |---|---|
-| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease; `wearables_timing.py`: Fitbit data by kind before / after first diagnosis; `wearables_events.py`: ED / inpatient visits vs Fitbit coverage) |
+| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease; `wearables_timing.py`: Fitbit data by kind before / after first diagnosis; `wearables_events.py`: ED / inpatient visits vs Fitbit coverage; `wearables_healthkit.py`: Apple HealthKit vs Fitbit) |
 | `rapidaudit/egress.py` | the small-count rule: 1–19 → `<20`, 0 stays 0 |
 | `rapidaudit/aou.py` | workspace env, `query` (parameterized SQL → pandas), cached Mondo download |
 | `rapidaudit/mondo_to_omop_mapping.py` | Mondo → OMOP standard Condition (port of Monarch's mondo2omop) |
@@ -66,6 +66,14 @@ and procedures on those visits. Site labels match the run's events report.
 Add `ARGS=--ip-overnight` to any events target to count an episode as inpatient only with
 a stay: a visit row ending after its start day, or inpatient rows on consecutive days (one
 site codes recurring same-day encounters as 9201).
+
+`make wearables-healthkit [HK=<project>.<dataset>]` (rare autoimmune, inpatient-stay rule)
+covers Apple HealthKit, a stand-alone dataset next to the V9 CDR (Sep 2026 off-cycle
+release). It finds the dataset (or takes `HK=`), picks a person and a date column per table,
+and reports tables and columns, who has HealthKit vs Fitbit data, the device-like values
+held by >= 20 persons, and the cohort's ED / inpatient episodes covered by Fitbit, by
+HealthKit, by either and only thanks to HealthKit. Tables over 100 GB are skipped
+(`ARGS='--max-gb N'` or `--hk-tables a,b`); `--hk-date-cols table=col` overrides a pick.
 
 In another workspace, run `make setup` and pass `RUNS_DIR=<that workspace's bucket
 mount>` (under `/home/<user>/workspace/`): the default `RUNS_DIR` is the V9 workspace's.

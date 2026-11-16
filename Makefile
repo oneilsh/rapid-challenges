@@ -1,4 +1,4 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites plot-wearables-timing plot-wearables-events mondo-snomed-review
+.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -42,6 +42,9 @@ help:
 	@echo "                               cutoff by default; run on V9 to size a V10 holdout)"
 	@echo "  make wearables-events-sites [FOCUS='site 6'] - + EHR source diagnostics report"
 	@echo "      (any events target: ARGS=--ip-overnight counts inpatient only with a night)"
+	@echo "  make wearables-healthkit [HK=<project>.<dataset>] - Apple HealthKit tables, who has"
+	@echo "                               them, and the ED / inpatient episodes they cover that"
+	@echo "                               Fitbit doesn't -> RUNS_DIR/wearables-healthkit/"
 	@echo "  make plot-wearables-events REPORT=results/wearables-events/<run>.md"
 	@echo "                             - PNGs from a (masked) timing report -> results/.../<run>/"
 	@echo "  make mondo-snomed-review   - score Mondo rare-disease SNOMED xrefs against SNOMED"
@@ -128,6 +131,16 @@ wearables-events-split:
 FOCUS ?=
 wearables-events-sites:
 	$(MAKE) wearables-events ARGS="--site-diagnostics $(if $(FOCUS),--focus-site '$(FOCUS)') $(ARGS)"
+
+# Apple HealthKit (stand-alone dataset next to the V9 CDR): finds the dataset (or HK=...),
+# reports its tables, and counts HealthKit vs Fitbit coverage in the cohort and of covered
+# ED / inpatient episodes (inpatient-stay rule, as in the challenge draft).
+HK_OUT ?= $(RUNS_DIR)/wearables-healthkit
+HK ?=
+wearables-healthkit: $(WORKSPACE_ENV)
+	mkdir -p "$(HK_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_healthkit.py \
+	    --out-dir "$(HK_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" $(if $(HK),--hk-dataset '$(HK)') \
+	    --ip-overnight $(SCOPE_ARGS) $(ARGS) 2>&1 | tee -a "$(HK_OUT)/wearables_healthkit_log.md"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=
