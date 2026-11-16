@@ -9,7 +9,7 @@ egress-safe tables.
 
 | path | what |
 |---|---|
-| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease; `wearables_timing.py`: Fitbit data by kind before / after first diagnosis; `wearables_events.py`: ED / inpatient visits vs Fitbit coverage; `wearables_healthkit.py`: Apple HealthKit vs Fitbit) |
+| `audits/` | one BigQuery-backed script per audit (`wearables_rare.py`: Fitbit x Mondo rare disease; `wearables_timing.py`: Fitbit data by kind before / after first diagnosis; `wearables_events.py`: ED / inpatient visits vs Fitbit coverage; `wearables_healthkit.py`: Apple HealthKit vs Fitbit; `wearables_chel.py`: Fitbit cohort in CHEL H3 hexagons) |
 | `rapidaudit/egress.py` | the small-count rule: 1–19 → `<20`, 0 stays 0 |
 | `rapidaudit/aou.py` | workspace env, `query` (parameterized SQL → pandas), cached Mondo download |
 | `rapidaudit/mondo_to_omop_mapping.py` | Mondo → OMOP standard Condition (port of Monarch's mondo2omop) |
@@ -77,6 +77,13 @@ and the cohort's ED / inpatient episodes covered by Fitbit, by HealthKit, by wat
 alone and added by HealthKit. Every query is dry-run first; the run stops over
 `--max-tb` (default 3). Nested cells are suppressed together: where a total splits into
 parts and one is <20, the larger parts show "—".
+
+`make wearables-chel [CHEL=<project>.<dataset>]` (rare autoimmune) looks for the CHEL data
+(V9 CT: `C_v9_R2_clad_chel_hex_offcycle`, "CLAD CHEL & Location Data"), finds how a person
+reaches an H3 hexagon (a person + hexagon table, or person / location_id to a location
+table with a hexagon), and counts the Fitbit + autoimmune cohort that can be placed, by
+disease, with the covered episodes among them and which CHEL indicator tables cover their
+hexagons. No hexagon id is printed; if nothing links, it prints the columns it searched.
 
 In another workspace, run `make setup` and pass `RUNS_DIR=<that workspace's bucket
 mount>` (under `~/workspace/`): the default `RUNS_DIR` is the V9 workspace's.
