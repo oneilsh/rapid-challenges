@@ -1,12 +1,16 @@
-.PHONY: help setup deps test wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit plot-wearables-timing plot-wearables-events mondo-snomed-review
+.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
 # Audit outputs go outside the repo tree, to the bucket-backed workspace mount (survives
 # VM deletion); override with RUNS_DIR=... .
-RUNS_DIR      ?= /home/dataproc/workspace/dataproc-staging-bayesian-phenotyping-for-rare-disease-v9/rapid
-# (the earlier V8 workspace used /home/jupyter/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy)
+RUNS_DIR      ?= $(HOME)/workspace/dataproc-staging-bayesian-phenotyping-for-rare-disease-v9/rapid
+# ($(HOME) is /home/jupyter on a plain VM, /home/dataproc on a Dataproc cluster; the bucket
+# mounts under ~/workspace either way. The earlier V8 workspace used ~/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy)
 MONDO_CACHE   ?= $(REPO_ROOT)/data/mondo
+# The folder RUNS_DIR sits in must already exist (the bucket mount): otherwise mkdir -p
+# would quietly create a local folder that dies with the VM.
+RUNS_PARENT    = $(patsubst %/,%,$(dir $(RUNS_DIR)))
 # Optional manual CDR override for setup (an external read-only project that
 # `wb resource list` doesn't surface). Persists in .workspace_env afterwards.
 CDR           ?=
@@ -60,6 +64,9 @@ deps:
 $(WORKSPACE_ENV):
 	$(MAKE) setup
 
+runs-dir:
+	@test -d "$(RUNS_PARENT)" || { echo "RUNS_DIR's parent $(RUNS_PARENT) does not exist (bucket not mounted here?); ls ~/workspace and pass RUNS_DIR=..." >&2; exit 1; }
+
 test:
 	uv run pytest -q
 
@@ -70,7 +77,7 @@ mondo-snomed-review:
 	    --out $(REPO_ROOT)/results/mondo-snomed-review/$(MONDO_VERSION)-rare-snomed-review.tsv
 
 WEAR_OUT ?= $(RUNS_DIR)/wearables-rare
-wearables-rare: $(WORKSPACE_ENV)
+wearables-rare: $(WORKSPACE_ENV) | runs-dir
 	mkdir -p "$(WEAR_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_rare.py \
 	    --out-dir "$(WEAR_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
 	    $(ARGS) 2>&1 | tee -a "$(WEAR_OUT)/wearables_rare_log.md"
@@ -89,7 +96,7 @@ wearables-rare-autoimmune:
 # Fitbit data by kind (daily summaries + intraday), before vs after each person's first
 # diagnosis. Same disease selection options as wearables-rare.
 TIMING_OUT ?= $(RUNS_DIR)/wearables-timing
-wearables-timing: $(WORKSPACE_ENV)
+wearables-timing: $(WORKSPACE_ENV) | runs-dir
 	mkdir -p "$(TIMING_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_timing.py \
 	    --out-dir "$(TIMING_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
 	    $(ARGS) 2>&1 | tee -a "$(TIMING_OUT)/wearables_timing_log.md"
@@ -115,7 +122,7 @@ wearables-timing-patients:
 # ED / inpatient visits after (and before) the first dx, and how many have Fitbit data in
 # the lookback window before them. SCOPE=autoimmune|cardio, as for the patient plots.
 EVENTS_OUT ?= $(RUNS_DIR)/wearables-events
-wearables-events: $(WORKSPACE_ENV)
+wearables-events: $(WORKSPACE_ENV) | runs-dir
 	mkdir -p "$(EVENTS_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_events.py \
 	    --out-dir "$(EVENTS_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
 	    $(SCOPE_ARGS) $(ARGS) 2>&1 | tee -a "$(EVENTS_OUT)/wearables_events_log.md"
@@ -137,7 +144,7 @@ wearables-events-sites:
 # ED / inpatient episodes (inpatient-stay rule, as in the challenge draft).
 HK_OUT ?= $(RUNS_DIR)/wearables-healthkit
 HK ?=
-wearables-healthkit: $(WORKSPACE_ENV)
+wearables-healthkit: $(WORKSPACE_ENV) | runs-dir
 	mkdir -p "$(HK_OUT)" && $(RUN) $(REPO_ROOT)/audits/wearables_healthkit.py \
 	    --out-dir "$(HK_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" $(if $(HK),--hk-dataset '$(HK)') \
 	    --ip-overnight $(SCOPE_ARGS) $(ARGS) 2>&1 | tee -a "$(HK_OUT)/wearables_healthkit_log.md"

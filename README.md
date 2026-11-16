@@ -76,7 +76,7 @@ HealthKit, by either and only thanks to HealthKit. Tables over 100 GB are skippe
 (`ARGS='--max-gb N'` or `--hk-tables a,b`); `--hk-date-cols table=col` overrides a pick.
 
 In another workspace, run `make setup` and pass `RUNS_DIR=<that workspace's bucket
-mount>` (under `/home/<user>/workspace/`): the default `RUNS_DIR` is the V9 workspace's.
+mount>` (under `~/workspace/`): the default `RUNS_DIR` is the V9 workspace's.
 
 wearables-timing writes one flat folder per CDR, every file named after the run:
 
@@ -93,9 +93,10 @@ wearables-timing/R2024Q3R8/
 Outputs go to `$(RUNS_DIR)/<audit>/<CDR dataset>/` (e.g. `…/wearables-rare/R2024Q3R8/`),
 outside the repo, so runs on different CDR releases don't overwrite each other. The default `RUNS_DIR` is the
 bucket-backed mount of the V9 workspace,
-`/home/dataproc/workspace/dataproc-staging-bayesian-phenotyping-for-rare-disease-v9/rapid`,
+`$HOME/workspace/dataproc-staging-bayesian-phenotyping-for-rare-disease-v9/rapid` (`$HOME` is
+`/home/jupyter` on a plain VM, `/home/dataproc` on a Dataproc cluster),
 so results survive VM deletion. (The earlier V8 workspace used
-`/home/jupyter/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy`.) Override with `RUNS_DIR=...`.
+`~/workspace/dataproc-staging-getting-started-with-registered-tier-data-copy`.) Override with `RUNS_DIR=...`.
 
 ## Egress
 
