@@ -6,7 +6,7 @@ what a submission needs? It runs a handful of tiny tasks on Google Batch and wri
 
 | task | question | default image |
 |---|---|---|
-| `identity` | which service account, project, zone and machine a Batch worker gets | Google Cloud SDK (`gcr.io`) |
+| `whoami` | which service account, project, zone and machine a Batch worker gets | Google Cloud SDK (`gcr.io`) |
 | `network` | which outside hosts a worker can reach: PyPI, GitHub, Docker Hub, Hugging Face, GCS, BigQuery | same |
 | `cdr` | can the worker query the CDR: a dry run, two masked counts, and a dry-run write that should be denied | same |
 | `dockerhub` | can a task pull from Docker Hub (`python:3.12-slim`) | Docker Hub |
@@ -32,10 +32,10 @@ make nextflow-probe          # add GPU=1 to also request a T4
 
 This runs from `RUNS_DIR/nextflow-probe`, so `.nextflow/` and the log stay out of the repo.
 Batch writes the work files to `$WORKSPACE_BUCKET/rapid/nextflow-probe/work`, and the summary goes to
-`$WORKSPACE_BUCKET/rapid/nextflow-probe/<timestamp>/summary.md`. To read it:
+`$WORKSPACE_BUCKET/rapid/nextflow-probe/<timestamp>/summary.md`. To print the latest:
 
 ```bash
-gcloud storage cat "$WORKSPACE_BUCKET/rapid/nextflow-probe/*/summary.md"
+make nextflow-probe-summary
 ```
 
 If a run fails, check `RUNS_DIR/nextflow-probe/.nextflow.log` and `wb gcloud batch jobs list`.

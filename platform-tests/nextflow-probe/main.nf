@@ -4,7 +4,7 @@
  * submission needs? Each process answers one question and writes a small text file;
  * `summarize` gathers them into summary.md in the output folder.
  *
- *   identity  - which service account the Batch worker runs as, which project/region
+ *   whoami    - which service account the Batch worker runs as, which project/region
  *   network   - which outside hosts a worker can reach (PyPI, GitHub, Docker Hub, HF)
  *   cdr       - can the worker query the CDR in BigQuery (dry run + masked counts)
  *   dockerhub - can a task pull an image from Docker Hub (Google images are the default)
@@ -19,12 +19,12 @@ params.billing = System.getenv('GOOGLE_CLOUD_PROJECT')  // project billed for qu
 params.outdir  = 'nextflow-probe-out'
 params.gpu     = false
 
-process identity {
-    output: path 'identity.txt'
+process whoami {
+    output: path 'whoami.txt'
     script:
     """
     {
-      echo "## identity"
+      echo "## whoami"
       echo "host: \$(hostname)"
       md=http://metadata.google.internal/computeMetadata/v1
       for k in instance/service-accounts/default/email project/project-id instance/zone instance/machine-type; do
@@ -32,7 +32,7 @@ process identity {
       done
       echo "image: \$(. /etc/os-release && echo \$PRETTY_NAME)"
       echo "bq: \$(bq version 2>&1 | tail -1)"
-    } > identity.txt
+    } > whoami.txt
     """
 }
 
@@ -108,7 +108,7 @@ process summarize {
       echo "# nextflow-probe ${workflow.runName} (${workflow.start})"
       echo "nextflow ${nextflow.version}, profile ${workflow.profile}, workDir ${workflow.workDir}"
       echo "outdir ${params.outdir}"
-      for f in identity network cdr dockerhub gpu; do
+      for f in whoami network cdr dockerhub gpu; do
         echo
         if [ -f \$f.txt ]; then cat \$f.txt; else echo "## \$f: no output (failed, skipped or not requested)"; fi
       done
@@ -119,7 +119,7 @@ process summarize {
 workflow {
     if (!params.cdr || !params.billing)
         error "Set --cdr <project>.<dataset> and --billing <project> (or WORKSPACE_CDR / GOOGLE_CLOUD_PROJECT)"
-    parts = identity()
+    parts = whoami()
         .mix(network(), cdr(params.cdr, params.billing), dockerhub())
     if (params.gpu) parts = parts.mix(gpu())
     summarize(parts.collect())

@@ -1,4 +1,4 @@
-.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit wearables-chel wearables-chel-map nextflow-probe plot-wearables-timing plot-wearables-events mondo-snomed-review
+.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit wearables-chel wearables-chel-map nextflow-probe nextflow-probe-summary plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -179,6 +179,11 @@ nextflow-probe: $(WORKSPACE_ENV) | runs-dir
 	wb nextflow run $(REPO_ROOT)/platform-tests/nextflow-probe/main.nf -profile google-batch \
 	    --outdir "$$WORKSPACE_BUCKET/rapid/nextflow-probe/$$(date +%Y%m%d-%H%M%S)" \
 	    $(if $(GPU),--gpu) $(ARGS) 2>&1 | tee -a "$(NF_OUT)/nextflow_probe_log.md"
+
+# Print the newest summary.md (WORKSPACE_BUCKET comes from .workspace_env, not your shell).
+nextflow-probe-summary: $(WORKSPACE_ENV)
+	@. $(WORKSPACE_ENV) && gcloud storage cat \
+	    "$$(gcloud storage ls "$$WORKSPACE_BUCKET/rapid/nextflow-probe/*/summary.md" | sort | tail -1)"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=
