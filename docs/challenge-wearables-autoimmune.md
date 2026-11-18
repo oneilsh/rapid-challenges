@@ -62,18 +62,18 @@ The challenge itself produces methods, a benchmark and evidence. The impacts bel
 * **Format:** A challenge run on the All of Us Researcher Workbench:  
   * **Wearables required:** Every submission must use wearables data.  
   * **Data combinations:** Each entry declares one of four combinations: wearables only; wearables \+ EHR and survey data (treated as one data type); wearables \+ CHEL data; or wearables \+ EHR and survey \+ CHEL data. Teams may enter one or several.  
-  * **Enforcing declarations:** At scoring time each entry is run on the input files for its declared combination, and its code is reviewed to confirm it reads nothing else (see Technical Implementation).  
+  * **Enforcing declarations:** The rules require each entry to use only its declared data types, and entries in line for a prize are verified before awards (see Technical Implementation).  
   * **Organizer-prepared data:** To avoid misunderstandings about the outcome and leakage of future information, challenge organizers will prepare the cohorts, the prediction dates, and the outcome labels for training data.  
-* **Participant task:** For each prediction date, defined as a day with at least 14 days of wearables data in the prior 30, teams output the probability that an ED or inpatient episode starts within the next 30 days, using only data dated before the prediction date. An episode is a run of ED or inpatient visit starts no more than 7 days apart. An inpatient visit counts only as part of a stay: a visit that ends after the day it starts, or inpatient visits on consecutive days. Some sites code recurring same-day encounters as inpatient visits, and without this rule one site supplied nearly half of all episodes.  
+* **Participant task:** For each prediction date, defined as a day with at least 14 days of wearables data in the prior 30, teams output the probability that an ED or inpatient episode starts within the next 30 days, using only data dated before the prediction date. An episode is a run of ED or inpatient visit starts no more than 7 days apart. An inpatient visit counts only as part of a stay: a visit that ends after the day it starts, or inpatient visits on consecutive days. Some sites code recurring same-day encounters as inpatient visits, and without this rule one site supplies nearly half of all episodes.  
 * **Expected submissions:** Teams may submit one model per data combination (wearables, EHR and survey, and CHEL data), up to four in total. For each submission:  
-  * **Code and model:** the team's code in a GitHub repository at a tagged commit, with one entry point that prepares features from the declared inputs and writes predictions, plus the trained model files. The organizers run these in a scoring workspace (see Technical Implementation). Phase 0 settles whether runs use plain Workbench VMs or workflow tools; dsub and Nextflow are supported, each running steps in container images \[8\].  
+  * **Code and model:** the team's code in a GitHub repository at a tagged commit, with one entry point that prepares features from the declared data types in the All of Us CDR and writes predictions, plus the trained model files. The organizers run these in a scoring workspace (see Technical Implementation). Phase 0 settles whether runs use plain Workbench VMs or workflow tools; dsub and Nextflow are supported, each running steps in container images \[8\].  
   * **Declaration** of the data types used.  
-  * **Report:** a short methods report (no more than 4 pages) describing the approach, the data types used and why, and an analysis of failure cases. The required contents are still to be finalized.  
+  * **Report:** a short methods report (no more than 4 pages) describing the approach, the data types used and why, and an analysis of failure cases. The required contents are to be finalized in Phase 0.  
 * **Eligibility:** Researchers with All of Us Controlled Tier access, which requires an institutional data use agreement and completed training and covers the wearables, EHR, survey, and CHEL data. Teams from ineligible institutions may participate through an eligible member, provided they follow all All of Us data use and results export policies. While some data combinations are available in the Registered Tier with fewer access requirements, these data are date shifted, preventing using dates to identify new episodes in V10 vs V9 data.  
 * **Team rules:** Teams of up to 5, with one team per person.  
 * **Judging and prizes:** Prizes go to the best absolute scores within each declared combination:  
   * **Best wearables-only**, **best wearables \+ EHR and survey**, **best wearables \+ CHEL** and **best wearables \+ EHR and survey \+ CHEL:** the highest primary score among entries declaring that combination.  
-  * A combination requires at least 3 eligible entries to be awarded. We announce this at launch, so an unpopular combination simply goes unawarded.  
+  * A combination requires at least 3 eligible entries to be awarded. We announce this at launch, so an unpopular combination goes unawarded.  
   * A panel of clinicians (rheumatology, neurology) and data scientists reviews the top submissions' reports. The panel can disqualify a submission but does not reorder rankings.
 
 ## Evaluation Framework
@@ -87,7 +87,7 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
   * **Evaluation unit:** person-days, with every eligible prediction date scored.  
 * **Primary metric:** Area under the precision-recall curve (AUPRC) for the pooled rare autoimmune cohort, which suits a positive rate of roughly 3% per 30-day window.  
 * **Value of each data type:** The allowed combinations of data modalities provide a unique opportunity to assess the relative value of additional data modalities beyond wearables:  
-  * **Across the field:** the best score among entries using a data type against the best score among entries without it (e.g., the best wearables \+ EHR entry against the best wearables-only entry), compared by paired bootstrap. Because these are each group's best entries, no single team can inflate the difference, and it answers the question at the level of current methods.  
+  * **Across the field:** To assess the potential impact of additional data modalities beyond wearables, we will compare the best score among entries using a data type against the best score among entries without it (e.g., the best wearables \+ EHR entry against the best wearables-only entry), compared by paired bootstrap. Because these are each group's best entries, no team can inflate the difference artificially, and it answers the question at the level of current methods.  
   * **Within methods:** for teams that enter more than one combination, the difference between their own entries (e.g., their wearables \+ EHR entry against their wearables-only entry), summarized across teams. This shows how consistently added data helps, as context for the field-level result.  
 * **Statistical methods:** 95% confidence intervals for AUPRC will come from bootstrap resampling of participants rather than person-days (1,000 resamples), so that repeat episodes from a single person do not inflate certainty. Each team is compared with the top-scoring team by paired bootstrap; teams whose difference from the leader is not significant share first place, and the remaining teams are ranked by point estimate.  
 * **Tie-breaking:** Better calibration (lower Brier score), then earlier final submission.  
@@ -106,48 +106,43 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
   * **Challenge workspace (organizers; shared read-only with registered teams):** the derived V9 tables (cohort, prediction dates, outcome labels, disease assignments), documentation, starter notebooks and baselines. Controlled Tier workspaces can be shared with any researcher who has Controlled Tier access \[9\].
   * **Team workspaces:** each team's own workspaces, for development on V9.
   * **Scoring workspace (organizers only):** where frozen submissions are run on V10.
-* **Holdout integrity comes from timing, not access control:** Once V10 is released, every Controlled Tier researcher can open it in their own workspaces, team members included. The holdout stays blind because submissions are frozen before V10 is released:
+* **V10 as evaluation holdout:** Once V10 is released, Controlled Tier researchers can open it in their own workspaces, team members included. The holdout stays blind because submissions are frozen before V10 is released:
   * Code is fixed at a tagged commit, and model files are recorded by checksum.
   * A model that changes after the freeze is disqualified.
   * The freeze date is set before the earliest plausible V10 release, not the expected one.
 * **Submission format:** each submission has:
-  * **Code:** a GitHub repository (private is fine, with organizers added as readers) at a tagged commit. It needs one entry point, which reads the challenge input files and writes the predictions table, and an environment file (pip or conda requirements, or optionally a container image).
+  * **Code:** a GitHub repository at a tagged commit, leveraging the workbench's GitHub integration. It needs one entry point, which processes All of Us and writes the predictions table, and an environment file (pip or conda requirements, or a container image for nextflow or dsub submission, depending on feasibility).
     * The Workbench clones Git repositories into new environments automatically, so this adds little work for teams already using Git, and it gives reviewers a fixed record.
-    * Notebook outputs must be cleared before pushing, since participant data on GitHub would breach the All of Us data use rules.
-  * **Model files:** kept in the team's workspace bucket and listed with checksums in the repository. At the freeze, the team shares its submission workspace with the organizers, who copy the files into the scoring workspace and verify the checksums. Copies between Controlled Tier workspaces are supported \[9\]; very large files (tens of GB) are part of the pilot.
+  * **Model files:** kept in the team's workspace bucket and listed with checksums in the repository. At the freeze, the team shares its submission workspace with the organizers, who copy the files into the scoring workspace and verify the checksums. Copies between Controlled Tier workspaces are supported \[9\].
   * **Declaration:** the data combination, and the resources requested (CPU or GPU type, memory, expected runtime) within the published limits.
   * **Output:** one table with person ID, prediction date and predicted probability. A submission is rejected if any row is missing, any probability is outside [0, 1], or there are extra columns.
 * **Compute environment:**
   * **Scoring runs:** organizers run each submission on a Workbench VM in the scoring workspace, with a GPU where requested, built from the team's environment file.
-  * **Workflow tools:** dsub or Nextflow are needed only if the number or size of submissions makes one-at-a-time runs impractical.
+  * **Workflow tools:** dsub or Nextflow will be evaluated as submission possibilities in Phase 0.
   * **Published limits:** published limits on scoring compute (for example, GPU type and hours per submission) keep inference costs bounded and the same for every team.
   * **Development costs:** teams pay for their own development compute; Workbench accounts start with $300 of credits. There is no practical way to cap what a well-funded team spends on training, and the rules say so openly.
-* **Inputs per combination:** From V10, the organizers extract one set of input files per data type (wearables; EHR and survey; CHEL), and each run is pointed only at the sets its combination declares. This makes the intended inputs unambiguous. It cannot stop code from querying the CDR directly, because the scoring workspace has full Controlled Tier access, so declarations are enforced by code review (below), not by access controls.
 * **Evaluation pipeline:**
   1. Freeze submissions: tagged commits, model checksums, declarations.
-  2. After V10 is released, build the holdout and the per-combination input files, using the same cohort, prediction date and outcome code as for V9, applied to dates after the V9 cutoff, for existing participants and for participants new to V10.
-  3. Review each submission's code (see Anti-gaming controls).
-  4. Run each submission on its declared inputs.
-  5. Run the **causality check**, which confirms that a model predicts each date only from data dated before it. Each submission receives the whole holdout at once, for efficiency, so a model could use later data, by mistake or on purpose: for example, a drop in heart rate the week after a prediction date, or the hospital visit itself. The check reruns the submission on copies of its inputs with all data after a few random cutoff dates deleted. Predictions for dates before each cutoff must match the full run, to within floating-point tolerance. A mismatch shows the model looked ahead. This costs a few extra runs per submission, rather than one run per prediction date.
-  6. Validate the output tables.
-  7. Compute the primary and secondary metrics, bootstrap intervals and stratified results.
-  8. Export the aggregate results (see Data protection).
-* **Anti-gaming controls:**
+  2. After V10 is released, build the holdout labels using the same cohort, prediction date and outcome code as for V9, applied to dates after the V9 cutoff, for existing participants and for participants new to V10.
+  3. Run each submission once against the V10 CDR.
+  4. Validate the output tables.
+  5. Compute the primary and secondary metrics, bootstrap intervals and stratified results.
+  6. Verify the submissions in line for a prize (see Anti-gaming controls).
+  7. Export the aggregate results (see Data protection).
+* **Anti-gaming controls:** Teams' code queries the CDR directly, and V10 contains every outcome, so nothing on the platform can stop a model from looking ahead or reading undeclared data. We therefore trust by default and verify the winners, as many academic challenges do:
+  * **Rules:** predictions may use only data dated before the prediction date, and only the declared data types.
+  * **As-of helper:** the starter code includes a small helper that applies the prediction-date cutoff to every CDR query. It makes compliance easy and accidental leakage unlikely, at no extra running cost.
   * **One submission per team per combination:** so a team cannot spread entries across many variants.
-  * **Code review:** an organizer reviews each scored submission's code for three things:
-    * that it reads only the declared input files, with no direct CDR queries or other data;
-    * that it does not use data dated on or after the prediction date;
-    * that it contains no hard-coded data.
-
-    Automated, LLM-assisted screening of each repository flags suspect code for that human reviewer. Review time is budgeted per submission (see Execution Plan).
-  * **Causality check:** see the evaluation pipeline, step 5.
+  * **Verify the winners:** every submission is run once and scored. Before prizes are announced, an organizer carefully reviews the code of each submission in line for a prize: the top entry in each combination and any entries sharing first place, about 4–8 in all. The reviewer checks for data dated on or after the prediction date, undeclared data types and hard-coded data, assisted by LLM screening and, if the pilot shows it is easy, the BigQuery history of the queries the submission ran. A violation means disqualification, and the next entry is verified in turn.
+  * **Built-in deterrents:** winners' code and reports are reviewed by the panel and published, and a model that sees its outcome would score suspiciously well.
+  * **Limits:** entries below the prize line are not audited. Their scores are reported, and feed the comparison of data types, on trust, and the results say so.
   * **No leaderboard:** a leaderboard would need repeated organizer-run scoring during Phase 1. Teams validate on their own V9 splits instead, with a self-check script and one dry run (see Participant Experience and Support).
 * **Security model:** All participant-level work stays inside the All of Us perimeter, in Controlled Tier workspaces. Repositories hold code only. Export of results and models follows the Data protection rules under Evaluation Framework.
 * **Auditability:** For every scored submission, the scoring workspace keeps everything needed to rerun the score:
   * the tagged commit and model checksums;
   * the input versions (CDR release and derived-table version);
-  * run logs, random seeds and the causality-check results;
-  * the code review notes.
+  * run logs and random seeds;
+  * verification notes for prize contenders.
 
   The scoring code itself lives in a public repository with no data.
 * **Baseline implementation:** The organizer baselines described above are packaged in the submission format: a repository, entry point, environment file and model files. They set the score floor, serve as a template for teams, and are the first submissions run through the pipeline.
@@ -158,9 +153,10 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
   * a dsub or Nextflow job running a container on Workbench data, with and without a GPU;
   * copying a large model file between Controlled Tier workspaces owned by different users;
   * running a team-style repository and environment file on a fresh VM;
-  * whether a training slice of the data, or a separate input set per data type, can be published as its own data collection under the All of Us perimeter policy \[10\].
+  * whether the BigQuery history of a scoring run (tables read, query text) is easy to pull, to help verify winners;
+  * whether a training slice of the data can be published as its own data collection under the All of Us perimeter policy \[10\].
 
-  Workbench documentation suggests individual researchers cannot create data collections, so the last item likely needs help from the program. If it is possible, declared inputs could be enforced by access rather than review, and a held-back V9 slice could support a leaderboard.
+  Workbench documentation suggests individual researchers cannot create data collections, so the last item likely needs help from the program. If it is possible, a held-back V9 slice could support a leaderboard.
 
 ## Participant Experience and Support
 
@@ -185,9 +181,9 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 * **What the challenge adds:**
   * **Challenge handbook:** the task, outcome and episode definitions, prediction dates, data combinations, submission rules, timeline, scoring and prize rules, in one place.
   * **Data dictionary for the derived tables:** cohort, prediction dates, labels, disease mapping (Mondo to OMOP), and how the cohort and labels were built. It links to the All of Us documentation for Fitbit, HealthKit, EHR, survey and CHEL data.
-  * **Tutorials and starter code:** notebooks in the challenge data workspace showing how to load the derived tables and query wearables data cheaply, a worked example from features to a prediction table, and a template repository showing the entry point, environment file and how to submit.
+  * **Tutorials and starter code:** notebooks in the challenge data workspace showing how to load the derived tables and query wearables data cheaply, a worked example from features to a prediction table, the as-of helper, and a template repository showing the entry point, environment file and how to submit.
   * **Baseline models:** the organizer baselines, with code and V9 validation scores.
-  * **Self-check script and dry run:** a script that runs a submission's entry point on a small V9 sample the way the scorer will, including the causality check, plus one organizer dry run about four weeks before the freeze, reported as pass or fail with no score.
+  * **Self-check script and dry run:** a script that runs a submission's entry point on a small V9 sample the way the scorer will and checks the output format, plus one organizer dry run about four weeks before the freeze, reported as pass or fail with no score.
   * **Challenge office hours:** every two weeks during Phase 1, at alternating times for different time zones, plus a launch webinar and one session before the submission deadline. Sessions are recorded and captioned.
   * **Help desk:** Workbench access and billing questions go to the All of Us support desk. Challenge questions go to a challenge forum or mailbox, answered within two business days, with answers that apply to everyone added to a public FAQ.
 * **Accessibility:** Documentation in accessible HTML, as well as PDF. Recorded, captioned sessions. Office hours at more than one time of day. Advance notice of the Controlled Tier access steps, which can take weeks at some institutions.
@@ -231,9 +227,9 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 | Period | Phase | Main work |
 | :---- | :---- | :---- |
 | Dec 2026 – Jan 2027 | Pilot, approvals and announcement | Workbench pilot (workflows, cross-workspace copies, data collections), program approvals, rules and prize terms, announcement and pre-registration open |
-| Feb – Mar 2027 | Phase 0, preparation | Final cohort and outcome definitions, derived tables, baselines, scoring pipeline, self-check script and causality check, end-to-end test on a V9 split |
+| Feb – Mar 2027 | Phase 0, preparation | Final cohort and outcome definitions, derived tables, baselines, scoring pipeline, self-check script and as-of helper, end-to-end test on a V9 split |
 | Apr – Jun 2027 | Phase 1, open development | Teams develop; office hours; one dry run about four weeks before the freeze; submissions freeze at the end, before V10 is released |
-| V10 release + ~6 weeks | Phase 2, blinded evaluation | Build the V10 holdout and input files, review code, run submissions and causality checks, compute scores |
+| V10 release + ~6 weeks | Phase 2, blinded evaluation | Build the V10 holdout labels, run submissions, compute scores, verify prize contenders |
 | Following 2 months | Phase 3, analysis and reporting | Stratified results, panel review of reports, winners announced, results exported after masking |
 | Following ~4 months | Dissemination and closeout | Results session, overview paper with the top teams, featured workspaces, archive of the scoring code and baselines |
 
@@ -244,13 +240,13 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
   4. submissions freeze;
   5. V10 is released;
   6. the holdout is built;
-  7. code is reviewed and submissions are scored.
+  7. submissions are scored and prize contenders verified.
 
   The V10 date is the one fixed external dependency, and the freeze must come before it. If V10 slips, submissions simply stay frozen longer. If V10 might arrive early, the freeze moves earlier, so the schedule never depends on V10 being late.
 * **Responsible parties:**
   * **Challenge leads (S. O'Neil, E. Hurwitz):** scientific design, rules, panel, communications, final decisions.
-  * **Data scientist:** cohort and labels, baselines, code review, metrics and statistics, office hours on the task and modeling, analysis and the overview paper.
-  * **Data engineer:** Workbench pilot, derived tables and input files, scoring workspace and pipeline, model file transfers, causality checks, cost monitoring.
+  * **Data scientist:** cohort and labels, baselines, verification of prize contenders, metrics and statistics, office hours on the task and modeling, analysis and the overview paper.
+  * **Data engineer:** Workbench pilot, derived tables, scoring workspace and pipeline, model file transfers, cost monitoring.
   * **Clinical panel (rheumatology, neurology) and patient organization advisors:** outcome review and report review.
   * **All of Us program:** V10, workspace provisioning, policy review.
 * **Staffing (effort per phase):**
@@ -267,13 +263,13 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 
   That is about 55% of a full-time data scientist and about 45–50% of a full-time data engineer over the life of the challenge.
   * **Phase 1** covers office hours, the FAQ, team questions and the dry run.
-  * **Phase 2** assumes up to about 20 scored submissions (four combinations, about five teams each). Each needs roughly a day of code review and one to two days of runs, causality checks and troubleshooting. More submissions mean more time.
+  * **Phase 2** assumes up to about 20 scored submissions (four combinations, about five teams each). Each needs one to two days to run and troubleshoot, and verifying the 4–8 prize contenders adds about a day each. More submissions mean more time.
   * **Closeout** covers the overview paper, a results session, featured workspaces and archiving.
   * **Challenge leads** need about 10–15% each throughout, more around launch and writing.
   * **Clinical panel members** need a few days each in Phase 3.
 * **Budget assumptions:**
   * **Personnel:** the effort above, at institutional rates.
-  * **Organizer cloud costs:** about $5,000 for the pilot, derived-table builds, scoring runs (including GPU time and causality-check reruns) and bootstrap analysis. Teams' own development compute is not included.
+  * **Organizer cloud costs:** about $5,000 for the pilot, derived-table builds, scoring runs (including GPU time) and bootstrap analysis. Teams' own development compute is not included.
   * **Team compute credits (optional):** a fixed pool for student-led or under-resourced teams, on top of the $300 All of Us starting credits.
   * **Prizes and panel:** prizes per awarded combination, honoraria for the clinical panel and patient advisors.
   * **Dissemination:** results session and travel for presenting teams, open-access publication fees.
@@ -298,10 +294,10 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 * **Scientific:** Wearables may carry little signal ahead of acute episodes in these diseases, or the signal may be swamped by prior utilization in the EHR. This is still a useful result, and the data-type comparison is designed to report it clearly.
 * **Data:** Fitbit wear is uneven and mostly absent before episodes (72% of episodes have no covered month). The cohort is skewed toward people who own and wear devices. Diagnosis codes may be loose (see Label quality below). CHEL variables are static snapshots at about 62-mile resolution.
 * **Legal and policy:** Prize terms, or the All of Us program's agreement to organizer-run scoring, could be refused or delayed (see Approvals).
-* **Privacy and security:** Model exports could memorize participant data. Small subgroups invite derived small counts. Team repositories could carry participant data if notebook outputs are pushed. Mitigations: aggregate-only export with masking, no model export without review, and code review that also checks repositories for data.
+* **Privacy and security:** Model exports could memorize participant data. Small subgroups invite derived small counts. Team repositories could carry participant data if notebook outputs are pushed. Mitigations: aggregate-only export with masking, no model export without review, rules on what repositories may hold, and a check for data in prize contenders' repositories.
 * **Platform:** Workflow tools may not run as hoped. Copying large model files between workspaces may be slow or blocked. Workbench changes during the challenge could break the scoring pipeline. The V10 release date may move, in either direction. The Workbench pilot is meant to surface the first two before launch.
 * **Participation:** Controlled Tier access takes time and is out of reach for some researchers. Compute costs fall on teams, and well-funded teams can spend more. Requiring a GitHub repository is a small extra hurdle. The outcome is rare and noisy, which may discourage people. Some combinations may draw fewer than 3 entries.
-* **Evaluation:** The holdout is small (about 500 episodes in about 300 participants), so confidence intervals will be wide and many teams may tie for first. Repeat episodes concentrated in a few participants or sites can dominate the score. Code review can miss well-hidden misuse of undeclared data, since the scoring workspace cannot technically restrict inputs.
+* **Evaluation:** The holdout is small (about 500 episodes in about 300 participants), so confidence intervals will be wide and many teams may tie for first. Repeat episodes concentrated in a few participants or sites can dominate the score. Only prize contenders are verified, so lookahead or undeclared data in other entries could go undetected and bias the comparison of data types.
 * **Adoption:** Results come from one research cohort with Fitbit devices and may not transfer to clinical populations or other devices. A positive result is a reason for prospective validation, not deployment.
 
 **Assumptions**
@@ -319,11 +315,10 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 * **Outcome coding across sites:** Visit types are coded differently across EHR sites. The inpatient-stay rule removes the worst case, but one site still records stays as runs of same-day inpatient visits, and another has many repeat ED visits in a few participants (254 episodes in 26). We need to decide whether to keep ED and inpatient together or use ED visits alone (1,615 covered episodes; a holdout of roughly 400), and whether to limit how much any one participant can weigh in scoring.  
 * **V10 and HealthKit:** The counts above are from the V9 Controlled Tier CDR and Fitbit only. V9 adds Apple HealthKit data as a separate dataset (about 19,900 participants, 4,067 of them also with Fitbit). In our cohort, HealthKit covers 774 more ED or inpatient episodes (261 persons) beyond Fitbit's 2,244 (789 persons). Most of that coverage comes from phone or other-app data such as step counts rather than an Apple Watch: watch data alone covers 199 episodes and starts only in 2020\. HealthKit also differs from Fitbit in data types and sources (more than 100 device and app makers), and some rows carry placeholder 1969/1970 timestamps. We plan to keep Fitbit as the basis for the cohort and coverage rule, and are considering offering HealthKit as an optional extra input.  
 * **Scoring pipeline:** Choose between plain VMs and workflow tools, how model files move from team workspaces, and the compute limits for scoring. The Workbench pilot informs all three.  
-* **Declared combinations:** Separate scoring workspaces for each data combination are likely not feasible, so declarations rest on code review. Decide how thorough review must be, and whether LLM-assisted screening is acceptable to the program. If the pilot shows that data collections can be published under the All of Us perimeter, revisit enforcing combinations by access.  
+* **Verifying winners:** Decide what the review of prize contenders covers (code, and the BigQuery history of their runs if available), whether LLM-assisted screening is acceptable to the program, and whether a clear accidental violation gets one chance to fix.  
 * **Report contents:** Settle the required sections of the team report.  
 * **Visit types:** Decide whether observation stays (visit concept 581385\) count as acute episodes.
 * **Incentives:** Set prize amounts, whether there is a runner-up prize, and whether to fund team compute credits.
-* **Causality check:** Settle the number of random cutoffs, the tolerance, and how a failed check is handled (disqualify, or allow one fix).
 * **Approvals:** Get All of Us program agreement on organizer-run scoring and on results export, plus prize terms from the funder, before the announcement.
 * **Freeze date:** Fix it against the earliest plausible V10 release, confirmed with the program.
 
