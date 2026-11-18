@@ -14,3 +14,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .DS_Store
+# Nextflow run state, if a run is started inside the repo
+.nextflow/
+.nextflow.log*
+work/

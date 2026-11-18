@@ -1,4 +1,4 @@
-.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit wearables-chel wearables-chel-map plot-wearables-timing plot-wearables-events mondo-snomed-review
+.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit wearables-chel wearables-chel-map nextflow-probe plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -169,6 +169,16 @@ wearables-chel-map: $(WORKSPACE_ENV) | runs-dir
 	    --out-dir "$(CHEL_OUT)" --mondo-cache-dir "$(MONDO_CACHE)" \
 	    --geo-cache-dir "$(REPO_ROOT)/data/geo" $(if $(CHEL),--chel-dataset '$(CHEL)') \
 	    $(SCOPE_ARGS) $(ARGS) 2>&1 | tee -a "$(CHEL_OUT)/wearables_chel_log.md"
+
+# Phase 0 platform test: a small Nextflow job on Google Batch (platform-tests/nextflow-probe/).
+# Runs from RUNS_DIR so .nextflow/ and logs stay out of the repo; summary.md lands in the
+# workspace bucket. GPU=1 also asks for a T4.
+NF_OUT = $(RUNS_DIR)/nextflow-probe
+nextflow-probe: $(WORKSPACE_ENV) | runs-dir
+	mkdir -p "$(NF_OUT)" && . $(WORKSPACE_ENV) && cd "$(NF_OUT)" && \
+	wb nextflow run $(REPO_ROOT)/platform-tests/nextflow-probe/main.nf -profile google-batch \
+	    --outdir "$$WORKSPACE_BUCKET/rapid/nextflow-probe/$$(date +%Y%m%d-%H%M%S)" \
+	    $(if $(GPU),--gpu) $(ARGS) 2>&1 | tee -a "$(NF_OUT)/nextflow_probe_log.md"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=
