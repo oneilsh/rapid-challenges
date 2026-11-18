@@ -133,7 +133,7 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
   * **Rules:** predictions may use only data dated before the prediction date, and only the declared data types.
   * **As-of helper:** the starter code includes a small helper that applies the prediction-date cutoff to every CDR query. It makes compliance easy and accidental leakage unlikely, at no extra running cost.
   * **One submission per team per combination:** so a team cannot spread entries across many variants.
-  * **Verify the winners:** every submission is run once and scored. Before prizes are announced, an organizer carefully reviews the code of each submission in line for a prize: the top entry in each combination and any entries sharing first place, about 4–8 in all. The reviewer checks for data dated on or after the prediction date, undeclared data types and hard-coded data, assisted by LLM screening and, if the pilot shows it is easy, the BigQuery history of the queries the submission ran. A violation means disqualification, and the next entry is verified in turn.
+  * **Verify the winners:** every submission is run once and scored. Before prizes are announced, an organizer carefully reviews the code of each submission in line for a prize: the top entry in each combination and any entries sharing first place, about 4–8 in all. The reviewer checks for data dated on or after the prediction date, undeclared data types and hard-coded data, assisted by LLM screening and, if Phase 0 testing shows it is easy, the BigQuery history of the queries the submission ran. A violation means disqualification, and the next entry is verified in turn.
   * **Built-in deterrents:** winners' code and reports are reviewed by the panel and published, and a model that sees its outcome would score suspiciously well.
   * **Limits:** entries below the prize line are not audited. Their scores are reported, and feed the comparison of data types, on trust, and the results say so.
   * **No leaderboard:** a leaderboard would need repeated organizer-run scoring during Phase 1. Teams validate on their own V9 splits instead, with a self-check script and one dry run (see Participant Experience and Support).
@@ -149,7 +149,7 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 * **Infrastructure constraints:**
   * BigQuery is billed by data scanned, which makes the minute-level Fitbit tables expensive to query carelessly.
   * GPUs are available, at the scoring team's cost.
-* **Workbench pilot (to start now, before Phase 0):** Exercise the parts of this design most likely to fail:
+* **Platform tests (first step of Phase 0):** Exercise the parts of this design most likely to fail:
   * a dsub or Nextflow job running a container on Workbench data, with and without a GPU;
   * copying a large model file between Controlled Tier workspaces owned by different users;
   * running a team-style repository and environment file on a fresh VM;
@@ -226,15 +226,14 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 
 | Period | Phase | Main work |
 | :---- | :---- | :---- |
-| Dec 2026 – Jan 2027 | Pilot, approvals and announcement | Workbench pilot (workflows, cross-workspace copies, data collections), program approvals, rules and prize terms, announcement and pre-registration open |
-| Feb – Mar 2027 | Phase 0, preparation | Final cohort and outcome definitions, derived tables, baselines, scoring pipeline, self-check script and as-of helper, end-to-end test on a V9 split |
+| Dec 2026 – Mar 2027 | Phase 0, preparation | Platform tests first (workflows, cross-workspace copies, query history, data collections); program approvals, rules and prize terms; announcement and pre-registration open by early February; final cohort and outcome definitions, derived tables, baselines, scoring pipeline, self-check script and as-of helper; end-to-end test on a V9 split |
 | Apr – Jun 2027 | Phase 1, open development | Teams develop; office hours; one dry run about four weeks before the freeze; submissions freeze at the end, before V10 is released |
 | V10 release + ~6 weeks | Phase 2, blinded evaluation | Build the V10 holdout labels, run submissions, compute scores, verify prize contenders |
 | Following 2 months | Phase 3, analysis and reporting | Stratified results, panel review of reports, winners announced, results exported after masking |
 | Following ~4 months | Dissemination and closeout | Results session, overview paper with the top teams, featured workspaces, archive of the scoring code and baselines |
 
 * **Critical path:** The steps run in order:
-  1. the Workbench pilot shows the submission and scoring design works;
+  1. Phase 0 platform tests show the submission and scoring design works;
   2. teams obtain Controlled Tier access;
   3. the scoring pipeline works end to end on V9;
   4. submissions freeze;
@@ -246,15 +245,14 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 * **Responsible parties:**
   * **Challenge leads (S. O'Neil, E. Hurwitz):** scientific design, rules, panel, communications, final decisions.
   * **Data scientist:** cohort and labels, baselines, verification of prize contenders, metrics and statistics, office hours on the task and modeling, analysis and the overview paper.
-  * **Data engineer:** Workbench pilot, derived tables, scoring workspace and pipeline, model file transfers, cost monitoring.
+  * **Data engineer:** platform tests, derived tables, scoring workspace and pipeline, model file transfers, cost monitoring.
   * **Clinical panel (rheumatology, neurology) and patient organization advisors:** outcome review and report review.
   * **All of Us program:** V10, workspace provisioning, policy review.
 * **Staffing (effort per phase):**
 
 | Phase (months) | Data scientist | Data engineer |
 | :---- | :---- | :---- |
-| Pilot, approvals and announcement (2) | 25% | 50% |
-| Phase 0, preparation (2) | 75% | 100% |
+| Phase 0, preparation (4) | 50% | 75% |
 | Phase 1, open development (3) | 40% | 40% |
 | Phase 2, blinded evaluation (~1.5) | 75% | 100% |
 | Phase 3, analysis and reporting (2) | 75% | 25% |
@@ -269,7 +267,7 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
   * **Clinical panel members** need a few days each in Phase 3.
 * **Budget assumptions:**
   * **Personnel:** the effort above, at institutional rates.
-  * **Organizer cloud costs:** about $5,000 for the pilot, derived-table builds, scoring runs (including GPU time) and bootstrap analysis. Teams' own development compute is not included.
+  * **Organizer cloud costs:** about $5,000 for platform tests, derived-table builds, scoring runs (including GPU time) and bootstrap analysis. Teams' own development compute is not included.
   * **Team compute credits (optional):** a fixed pool for student-led or under-resourced teams, on top of the $300 All of Us starting credits.
   * **Prizes and panel:** prizes per awarded combination, honoraria for the clinical panel and patient advisors.
   * **Dissemination:** results session and travel for presenting teams, open-access publication fees.
@@ -295,7 +293,7 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 * **Data:** Fitbit wear is uneven and mostly absent before episodes (72% of episodes have no covered month). The cohort is skewed toward people who own and wear devices. Diagnosis codes may be loose (see Label quality below). CHEL variables are static snapshots at about 62-mile resolution.
 * **Legal and policy:** Prize terms, or the All of Us program's agreement to organizer-run scoring, could be refused or delayed (see Approvals).
 * **Privacy and security:** Model exports could memorize participant data. Small subgroups invite derived small counts. Team repositories could carry participant data if notebook outputs are pushed. Mitigations: aggregate-only export with masking, no model export without review, rules on what repositories may hold, and a check for data in prize contenders' repositories.
-* **Platform:** Workflow tools may not run as hoped. Copying large model files between workspaces may be slow or blocked. Workbench changes during the challenge could break the scoring pipeline. The V10 release date may move, in either direction. The Workbench pilot is meant to surface the first two before launch.
+* **Platform:** Workflow tools may not run as hoped. Copying large model files between workspaces may be slow or blocked. Workbench changes during the challenge could break the scoring pipeline. The V10 release date may move, in either direction. Platform tests at the start of Phase 0 are meant to surface the first two before launch.
 * **Participation:** Controlled Tier access takes time and is out of reach for some researchers. Compute costs fall on teams, and well-funded teams can spend more. Requiring a GitHub repository is a small extra hurdle. The outcome is rare and noisy, which may discourage people. Some combinations may draw fewer than 3 entries.
 * **Evaluation:** The holdout is small (about 500 episodes in about 300 participants), so confidence intervals will be wide and many teams may tie for first. Repeat episodes concentrated in a few participants or sites can dominate the score. Only prize contenders are verified, so lookahead or undeclared data in other entries could go undetected and bias the comparison of data types.
 * **Adoption:** Results come from one research cohort with Fitbit devices and may not transfer to clinical populations or other devices. A positive result is a reason for prospective validation, not deployment.
@@ -314,7 +312,7 @@ Only the primary metric, AUPRC as described below, will decide rankings and priz
 * **Localized scleroderma:** The disease is largely skin-limited, and in v8 its diagnosis dates looked unreliable (more covered episodes before diagnosis than after; this no longer holds in V9). We propose keeping it in the pooled cohort only, not as a named sub-cohort.  
 * **Outcome coding across sites:** Visit types are coded differently across EHR sites. The inpatient-stay rule removes the worst case, but one site still records stays as runs of same-day inpatient visits, and another has many repeat ED visits in a few participants (254 episodes in 26). We need to decide whether to keep ED and inpatient together or use ED visits alone (1,615 covered episodes; a holdout of roughly 400), and whether to limit how much any one participant can weigh in scoring.  
 * **V10 and HealthKit:** The counts above are from the V9 Controlled Tier CDR and Fitbit only. V9 adds Apple HealthKit data as a separate dataset (about 19,900 participants, 4,067 of them also with Fitbit). In our cohort, HealthKit covers 774 more ED or inpatient episodes (261 persons) beyond Fitbit's 2,244 (789 persons). Most of that coverage comes from phone or other-app data such as step counts rather than an Apple Watch: watch data alone covers 199 episodes and starts only in 2020\. HealthKit also differs from Fitbit in data types and sources (more than 100 device and app makers), and some rows carry placeholder 1969/1970 timestamps. We plan to keep Fitbit as the basis for the cohort and coverage rule, and are considering offering HealthKit as an optional extra input.  
-* **Scoring pipeline:** Choose between plain VMs and workflow tools, how model files move from team workspaces, and the compute limits for scoring. The Workbench pilot informs all three.  
+* **Scoring pipeline:** Choose between plain VMs and workflow tools, how model files move from team workspaces, and the compute limits for scoring. Phase 0 platform tests inform all three.  
 * **Verifying winners:** Decide what the review of prize contenders covers (code, and the BigQuery history of their runs if available), whether LLM-assisted screening is acceptable to the program, and whether a clear accidental violation gets one chance to fix.  
 * **Report contents:** Settle the required sections of the team report.  
 * **Visit types:** Decide whether observation stays (visit concept 581385\) count as acute episodes.
