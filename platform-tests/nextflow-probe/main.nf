@@ -31,7 +31,7 @@ process whoami {
         echo "\$k: \$(curl -s -m 5 -H 'Metadata-Flavor: Google' \$md/\$k || echo '?')"
       done
       echo "image: \$(. /etc/os-release && echo \$PRETTY_NAME)"
-      echo "bq: \$(bq version 2>&1 | tail -1)"
+      echo "python3: \$(command -v python3 || echo none)"
     } > whoami.txt
     """
 }
@@ -57,17 +57,32 @@ process cdr {
     output:
     path 'cdr.txt'
 
+    // BigQuery REST API with curl and the worker's metadata token, so the test doesn't
+    // depend on what the image ships (the SDK 'slim' image's bq lacks python3).
     script:
     """
     # numbers 1-19 -> <20; anything else (0, >= 20, an error message) passes through
     mask() { awk '{ print (\$0 ~ /^[0-9]+\$/ && \$1 >= 1 && \$1 <= 19) ? "<20" : \$0 }'; }
-    q() { bq --quiet --project_id=${billing} query --use_legacy_sql=false --format=csv "\$@"; }
+    tok=\$(curl -s -H 'Metadata-Flavor: Google' \\
+      http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \\
+      | sed -n 's/.*"access_token" *: *"\\([^"]*\\)".*/\\1/p')
+    # q <sql> <dryRun true|false> <field>: print the field's first value, or the error message
+    q() {
+      r=\$(curl -s -m 170 -H "Authorization: Bearer \$tok" -H 'Content-Type: application/json' \\
+        -d "{\\"query\\": \\"\$1\\", \\"useLegacySql\\": false, \\"dryRun\\": \$2, \\"timeoutMs\\": 160000}" \\
+        "https://bigquery.googleapis.com/bigquery/v2/projects/${billing}/queries")
+      v=\$(printf '%s' "\$r" | tr -d '\\n' | grep -o "\\"\$3\\" *: *\\"[^\\"]*\\"" | head -1 | sed 's/.*: *"\\(.*\\)"/\\1/')
+      if [ -n "\$v" ]; then echo "\$v"
+      else printf '%s' "\$r" | tr -d '\\n' | grep -o '"message" *: *"[^"]*"' | head -1 | cut -c1-200
+      fi
+    }
     {
       echo "## cdr ${cdr} (billed to ${billing})"
-      echo "dry run, persons: \$(q --dry_run 'SELECT COUNT(DISTINCT person_id) FROM `${cdr}.person`' 2>&1 | tail -1)"
-      echo "persons: \$(q 'SELECT COUNT(DISTINCT person_id) FROM `${cdr}.person`' 2>&1 | tail -1 | mask)"
-      echo "persons with Fitbit activity: \$(q 'SELECT COUNT(DISTINCT person_id) FROM `${cdr}.activity_summary`' 2>&1 | tail -1 | mask)"
-      echo "write to CDR, dry run (should be denied): \$(q --dry_run 'CREATE TABLE `${cdr}.nf_probe` AS SELECT 1 AS x' 2>&1 | tail -1 | cut -c1-200)"
+      echo "token: \$([ -n "\$tok" ] && echo ok || echo missing)"
+      echo "dry run, persons, bytes: \$(q 'SELECT COUNT(DISTINCT person_id) FROM `${cdr}.person`' true totalBytesProcessed)"
+      echo "persons: \$(q 'SELECT COUNT(DISTINCT person_id) FROM `${cdr}.person`' false v | mask)"
+      echo "persons with Fitbit activity: \$(q 'SELECT COUNT(DISTINCT person_id) FROM `${cdr}.activity_summary`' false v | mask)"
+      echo "write to CDR, dry run (should be denied): \$(q 'CREATE TABLE `${cdr}.nf_probe` AS SELECT 1 AS x' true totalBytesProcessed)"
     } > cdr.txt
     """
 }
