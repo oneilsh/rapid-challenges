@@ -1,4 +1,4 @@
-.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit wearables-chel wearables-chel-map nextflow-probe nextflow-probe-summary plot-wearables-timing plot-wearables-events mondo-snomed-review
+.PHONY: help setup deps test runs-dir wearables-rare wearables-rare-exact wearables-rare-autoimmune wearables-timing wearables-timing-autoimmune wearables-timing-cardio wearables-timing-patients wearables-events wearables-events-split wearables-events-sites wearables-healthkit wearables-chel wearables-chel-map nf-bucket nextflow-probe nextflow-probe-summary plot-wearables-timing plot-wearables-events mondo-snomed-review
 
 REPO_ROOT     := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WORKSPACE_ENV := $(REPO_ROOT)/.workspace_env
@@ -172,18 +172,23 @@ wearables-chel-map: $(WORKSPACE_ENV) | runs-dir
 
 # Phase 0 platform test: a small Nextflow job on Google Batch (platform-tests/nextflow-probe/).
 # Runs from RUNS_DIR so .nextflow/ and logs stay out of the repo; summary.md lands in the
-# workspace bucket. GPU=1 also asks for a T4.
+# bucket that RUNS_DIR is mounted from (its folder under ~/workspace is the Workbench
+# resource id; override with NF_BUCKET=gs://...). GPU=1 also asks for a T4.
 NF_OUT = $(RUNS_DIR)/nextflow-probe
-nextflow-probe: $(WORKSPACE_ENV) | runs-dir
+NF_BUCKET ?= $(shell wb resolve --id $(notdir $(RUNS_PARENT)) 2>/dev/null)
+NF_GS = $(patsubst %/,%,$(NF_BUCKET))/rapid/nextflow-probe
+nf-bucket:
+	@case "$(NF_BUCKET)" in gs://*) ;; *) echo "Could not resolve the bucket for $(RUNS_PARENT) (got '$(NF_BUCKET)'); pass NF_BUCKET=gs://..." >&2; exit 1;; esac
+
+nextflow-probe: $(WORKSPACE_ENV) nf-bucket | runs-dir
 	mkdir -p "$(NF_OUT)" && . $(WORKSPACE_ENV) && cd "$(NF_OUT)" && \
 	wb nextflow run $(REPO_ROOT)/platform-tests/nextflow-probe/main.nf -profile google-batch \
-	    --outdir "$$WORKSPACE_BUCKET/rapid/nextflow-probe/$$(date +%Y%m%d-%H%M%S)" \
+	    -w "$(NF_GS)/work" --outdir "$(NF_GS)/$$(date +%Y%m%d-%H%M%S)" \
 	    $(if $(GPU),--gpu) $(ARGS) 2>&1 | tee -a "$(NF_OUT)/nextflow_probe_log.md"
 
-# Print the newest summary.md (WORKSPACE_BUCKET comes from .workspace_env, not your shell).
-nextflow-probe-summary: $(WORKSPACE_ENV)
-	@. $(WORKSPACE_ENV) && gcloud storage cat \
-	    "$$(gcloud storage ls "$$WORKSPACE_BUCKET/rapid/nextflow-probe/*/summary.md" | sort | tail -1)"
+# Print the newest summary.md.
+nextflow-probe-summary: nf-bucket
+	@gcloud storage cat "$$(gcloud storage ls '$(NF_GS)/*/summary.md' | sort | tail -1)"
 
 # PNGs from a masked wearables-timing report (a filed results/ copy works), next to it.
 REPORT ?=

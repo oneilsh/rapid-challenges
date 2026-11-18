@@ -31,8 +31,9 @@ make nextflow-probe          # add GPU=1 to also request a T4
 ```
 
 This runs from `RUNS_DIR/nextflow-probe`, so `.nextflow/` and the log stay out of the repo.
-Batch writes the work files to `$WORKSPACE_BUCKET/rapid/nextflow-probe/work`, and the summary goes to
-`$WORKSPACE_BUCKET/rapid/nextflow-probe/<timestamp>/summary.md`. To print the latest:
+The bucket is the one `RUNS_DIR` is mounted from, found with `wb resolve` (or pass
+`NF_BUCKET=gs://...`). Batch writes work files to `<bucket>/rapid/nextflow-probe/work`, and
+the summary goes to `<bucket>/rapid/nextflow-probe/<timestamp>/summary.md`. To print the latest:
 
 ```bash
 make nextflow-probe-summary
